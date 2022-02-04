@@ -1,4 +1,4 @@
-# CFRibbage
+# CFRibbage.jl
 *A Hybrid Counterfactual Regret Minimization solver for 2-player Cribbage*
 
 This is a learning project in several ways:
