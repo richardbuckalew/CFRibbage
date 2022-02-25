@@ -1,8 +1,24 @@
 using Combinatorics, Serialization, IterTools, ProgressMeter, StatsBase, ProfileView, BenchmarkTools
-using DataStructures, Random, ThreadTools
+using DataStructures, Random, DataFrames, ThreadTools
 
-include("dbUtils.jl");
 include("playUtils.jl");
+include("dbUtils.jl");
+
+
+struct Card
+    rank::Int64;
+    suit::Int64;    
+end
+Base.show(io::IO, c::Card) = print(io, shortname(c));
+showHand(H) = display(permutedims(H));
+Base.isless(x::Card, y::Card) = (x.suit > y.suit) ? true : (x.rank < y.rank);   ## Bridge bidding suit order, ace == 1
+
+
+function countertovector(c::Accumulator{Int64, Int64})
+    return sort([r for r in keys(c) for ii in 1:c[r]]);
+end
+
+
 
 (@isdefined cardsuits) || (const cardsuits = collect(1:4));
 (@isdefined cardranks) || (const cardranks = collect(1:13));
@@ -12,23 +28,34 @@ include("playUtils.jl");
 (@isdefined shortsuit) || (const shortsuit = ["♠","♡","♢","♣"]);
 (@isdefined shortrank) || (const shortrank = ["A","2","3","4","5","6","7","8","9","T","J","Q","K"]);
 
-struct Card
-    rank::Int64
-    suit::Int64    
-end
-Base.show(io::IO, c::Card) = print(io, shortname(c));
-showHand(H) = display(permutedims(H));
-Base.isless(x::Card, y::Card) = (x.suit > y.suit) ? true : (x.rank < y.rank);   ## Bridge bidding suit order, ace == 1
+(@isdefined PP) || (const PP = [
+    [[1]],
+    [[2], [1,1]],
+    [[3], [2,1], [1,2], [1,1,1]],
+    [[4], [3,1], [1,3], [2,2], [2,1,1], [1,2,1], [1,1,2], [1,1,1,1]]
+]);
+(@isdefined cardcombs) || (const cardcombs = [collect(combinations(cardranks, n)) for n in 1:4]);
+
 
 (@isdefined standardDeck) || (const standardDeck = [Card(r,s) for r in cardranks for s in cardsuits]);
 (@isdefined rankDeck) || (const rankDeck = [c.rank for c in standardDeck]);
 
-fullname(c::Card) = ranknames[c.rank] * " of " * suitnames[c.suit];
-shortname(c::Card) = shortrank[c.rank] * shortsuit[c.suit];
-handname(h::AbstractArray{Card}) = permutedims(shortname.(sort(h, by = c->c.rank)));
+(@isdefined fullname) || (const fullname(c::Card) = ranknames[c.rank] * " of " * suitnames[c.suit]);
+(@isdefined shortname) || (const shortname(c::Card) = shortrank[c.rank] * shortsuit[c.suit]);
+(@isdefined handname) || (const handname(h::AbstractArray{Card}) = permutedims(shortname.(sort(h, by = c->c.rank))));
 
-handranks(h::Vector{Card}) = sort([c.rank for c in h]);
-handsuits(h::Vector{Card}) = sort([c.suit for c in h]);
+(@isdefined handranks) || (handranks(h::Vector{Card}) = sort([c.rank for c in h]));
+(@isdefined handsuits) || (handsuits(h::Vector{Card}) = sort([c.suit for c in h]));
+
+
+# (@isdefined db) || (const db = deserialize("db.jls"));
+# (@isdefined handID) || (const handID = deserialize("handID.jls"));  # Tuple => NTuple{2, Int64}
+# (@isdefined allPH) || (const allPH = deserialize("allPH.jls"));     # Vector{Counter}
+# (@isdefined phID) || (const phID = deserialize("phID.jls"));        # Counter => Int64
+# (@isdefined phRows) || (const phRows = deserialize("phRows.jls"));  # Counter => Vector{Int64}
+# (@isdefined M) || (@time global M = loadM());
+
+
 
 
 function canonicalize(h::Vector{Card})
@@ -195,11 +222,3 @@ end
 
 
 
-# (@isdefined db) || (const db = deserialize("db.jls"));
-# (@isdefined handID) || (const handID = deserialize("handID.jls"));
-# (@isdefined playHandRowID) || (const playHandRowID = deserialize("playHandRowID.jls"));
-# (@isdefined playHandID) || (const playHandID = deserialize("playHandID.jls"));
-# (@isdefined perfectSolveMatrix) || (const perfectSolveMatrix = deserialize("perfectSolveMatrix.jls"));
-
-
-# doCFR(db, handID, playHandID, perfectSolveMatrix)

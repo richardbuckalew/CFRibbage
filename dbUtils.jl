@@ -1,24 +1,19 @@
-using DataFrames, Serialization
 
-nSuits = 4;
-ranks = 1:13;
-handSize = 6;
-minMaxSuitSize = Int(ceil(handSize / nSuits));
 
-CC = collect.([combinations(ranks, ii) for ii in 0:handSize]);
+const CC = collect.([combinations(cardranks, ii) for ii in 0:6]);
 function newSuits(H)
 
     nSuit = length(H) + 1;
-    (nSuit > 1) ? (cardsleft = handSize - sum(length.(H))) : (cardsleft = handSize);
+    (nSuit > 1) ? (cardsleft = 6 - sum(length.(H))) : (cardsleft = 6);
     (cardsleft == 0) && (return []);
 
     NS = [];
 
     if nSuit == 1
-        m = minMaxSuitSize;
-        M = handSize;
-    elseif 1 < nSuit < nSuits
-        m = Int(ceil(cardsleft / (nSuits - nSuit + 1)));
+        m = 2;
+        M = 6;
+    elseif 1 < nSuit < 4
+        m = Int(ceil(cardsleft / (4 - nSuit + 1)));
         M = cardsleft;
     else
         m = cardsleft;
@@ -95,35 +90,6 @@ function getPlayHand(h, d)
     return  Tuple(sort(vcat([Array(setdiff(h[ii], d[ii])) for ii in 1:4]...)));
 end
 
-function buildHandData()
-
-    hData = Vector{HandData}(undef, length(allHands));
-    hIndices = Dict{Any, Int64}();
-    phIndices = Dict{Any, Vector{NTuple{2,Int64}}}();
-
-    for (ii, H) in enumerate(allHands)
-
-        D = getDiscards(H);
-        nd = length(D);
-
-        PH = Vector{Any}(undef, nd);
-        for (jj,d) in enumerate(D)
-            PH[jj] = makeDiscard(H, d);
-            if haskey(phIndices, PH[jj])
-                push!(phIndices[PH[jj]], (ii, jj));
-            else
-                phIndices[PH[jj]] = [(ii, jj)];
-            end
-        end
-
-        hData[ii] = HandData(handProbabilities[ii], D, PH, zeros(Int64,nd), zeros(Float64,nd), zeros(Float64,nd));
-        hIndices[H] = ii;
-
-    end
-
-    return (hData, hIndices, phIndices);
-end
-
 function dealAllHands()
 
     # dealCounts = Dict{Any, Int64}();
@@ -147,7 +113,9 @@ end
 
 generateAllHands() = [[]] |> addSuit |> addSuit |> addSuit |> addSuit;
 
-handType = Union{
+
+const hType = Accumulator{Int64, Int64}
+const handType = Union{
     Tuple{Tuple{Int64, Int64, Int64, Int64, Int64, Int64}, Tuple{}, Tuple{}, Tuple{}},
     Tuple{Tuple{Int64, Int64, Int64, Int64, Int64}, Tuple{Int64}, Tuple{}, Tuple{}},
     Tuple{Tuple{Int64, Int64, Int64, Int64}, Tuple{Int64, Int64}, Tuple{}, Tuple{}},
@@ -158,7 +126,7 @@ handType = Union{
     Tuple{Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{}},
     Tuple{Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{Int64}, Tuple{Int64}}
 }
-discardType = Union{
+const discardType = Union{
     Tuple{Tuple{Int64, Int64}, Tuple{}, Tuple{}, Tuple{}},
     Tuple{Tuple{}, Tuple{Int64, Int64}, Tuple{}, Tuple{}},
     Tuple{Tuple{}, Tuple{}, Tuple{Int64, Int64}, Tuple{}},
@@ -171,52 +139,53 @@ discardType = Union{
     Tuple{Tuple{}, Tuple{}, Tuple{Int64}, Tuple{Int64}},
 }
 
+
 function buildDB(hands, probs)
     # nHands = length(hands);
 
-    handIndexDict = Dict{handType, Tuple{Int64, Int64}}();
-    playHandIndexDict = Dict{NTuple{4, Int64}, Int64}();
+    handIndexDict = Dict{handType, Tuple{Int64, Int64}}()
+    playHandIndexDict = Dict{NTuple{4, Int64}, Int64}()
 
-    handProbabilities = [];
-    discards = discardType[];
-    playHands = NTuple{4, Int64}[];
-    playCounts = Int64[];
-    marginRegrets = Float64[];
-    greedyRegrets = Float64[];
-    fastRegrets = Float64[];
-    marginProfile = Float64[];
-    greedyProfile = Float64[];
-    fastProfile = Float64[];
+    handProbabilities = []
+    discards = discardType[]
+    playHands = NTuple{4, Int64}[]
+    playCounts = Int64[]
+    marginRegrets = Float64[]
+    greedyRegrets = Float64[]
+    fastRegrets = Float64[]
+    marginProfile = Float64[]
+    greedyProfile = Float64[]
+    fastProfile = Float64[]
 
-    nRow = 1;
+    nRow = 1
 
     @showprogress 1 for (nHand, hand) in enumerate(hands)
 
-        D = getDiscards(hand);
-        nDiscards = length(D);
+        D = getDiscards(hand)
+        nDiscards = length(D)
 
-        handIndexDict[Tuple(Tuple.(hand))] = (nRow, nRow + nDiscards -1);
+        handIndexDict[Tuple(Tuple.(hand))] = (nRow, nRow + nDiscards -1)
 
-        p = probs[nHand];
+        p = probs[nHand]
 
-        append!(handProbabilities, [p for d in D]);
-        append!(discards, D);
-        pHands = [getPlayHand(hand, d) for d in D];
-        append!(playHands, pHands);
-        append!(playCounts, zeros(Int64, nDiscards));
-        append!(marginRegrets, zeros(Float64, nDiscards));
-        append!(greedyRegrets, zeros(Float64, nDiscards));
-        append!(fastRegrets, zeros(Float64, nDiscards));
-        append!(marginProfile, [1/nDiscards for d in D]);
-        append!(greedyProfile, [1/nDiscards for d in D]);
-        append!(fastProfile, [1/nDiscards for d in D]);
+        append!(handProbabilities, [p for d in D])
+        append!(discards, D)
+        pHands = [getPlayHand(hand, d) for d in D]
+        append!(playHands, pHands)
+        append!(playCounts, zeros(Int64, nDiscards))
+        append!(marginRegrets, zeros(Float64, nDiscards))
+        append!(greedyRegrets, zeros(Float64, nDiscards))
+        append!(fastRegrets, zeros(Float64, nDiscards))
+        append!(marginProfile, [1/nDiscards for d in D])
+        append!(greedyProfile, [1/nDiscards for d in D])
+        append!(fastProfile, [1/nDiscards for d in D])
 
         for (ii, pHand) in enumerate(pHands)
-            playHandIndexDict[pHand] = nRow + ii - 1;
+            playHandIndexDict[pHand] = nRow + ii - 1
         end
 
 
-        nRow += nDiscards;       
+        nRow += nDiscards    
 
     end
 
@@ -236,22 +205,89 @@ function buildDB(hands, probs)
                     fastRegretPone = fastRegrets,
                     marginProfilePone = marginProfile,
                     greedyProfilePone = greedyProfile,
-                    fastProfilePone = fastProfile);
+                    fastProfilePone = fastProfile)
 
-    return (df, handIndexDict, playHandIndexDict);
+    return (df, handIndexDict, playHandIndexDict)
 end
 
 
 
-# (@isdefined allHands) || (allHands = deserialize("allHands.jls"));
-# (@isdefined allHandProbabilities) || (allHandProbabilities = deserialize("allHandProbabilities.jls"));
-
-# (db, hID, pHID) = buildDB(allHands, allHandProbabilities);
-# serialize("database.jls", (db, hID, pHID));
 
 
+struct FlatPack
+    n_v::Vector{Int8};
+    n_l::Vector{Int8};
+    flatv::Vector{Int8};
+    flatl::Vector{Int16};
+end
+Base.show(io::IO, fp::FlatPack) = print(io, "Flat Pack (", length(fp.n_v), " nodes)");
+
+function packflat(ft::FlatTree)
+    n_v = Int8[]
+    n_l = Int8[]
+    flatv = Int8[]
+    flatl = Int16[]
+    for ii in 1:length(ft)
+        push!(n_v, length(ft.values[ii]))
+        push!(n_l, length(ft.links[ii]))
+        append!(flatv, ft.values[ii])
+        append!(flatl, ft.links[ii])
+    end
+    return FlatPack(n_v, n_l, flatv, flatl)
+end
+function packflat(::Nothing)
+    return nothing
+end
+
+function unpackflat(fp::FlatPack)    
+    V = Vector{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}()
+    L = Vector{Union{NTuple{4, Int16}, NTuple{3, Int16}, NTuple{2, Int16}, NTuple{1, Int16}, Tuple{}}}()
+    iv = 1
+    il = 1
+    for (jj, n) in enumerate(fp.n_v)
+        push!(V, Tuple(fp.flatv[iv:(iv+n-1)]))
+        if fp.n_l[jj] > 0
+            push!(L, Tuple(fp.flatl[il:(il+fp.n_l[jj]-1)]))
+        else
+            push!(L, ())
+        end
+        il += fp.n_l[jj]
+        iv += n
+    end
+    return FlatTree(Tuple(V), Tuple(L));
+end
+function unpackflat(::Nothing)
+    return nothing
+end
 
 
 
+
+function gettree(h1::hType, h2::hType)
+    i1 = phID[h1]
+    i2 = phID[h2]
+    if !isnothing(M[i1, i2])
+        return M[i1, i2]
+    end
+    ps = PlayState(2, [countertovector(h1), countertovector(h2)], Int64[], Int64[], 0, 0, 0, [0,0], PlayState[], 0, 0)
+    solve!(ps)
+    mn = MinimalNode((), ())
+    minimize!(ps, mn)
+    ft =makeflat(mn)
+    M[i1, i2] = ft
+    return ft
+end
+
+function saveM()
+    serialize("M.jls", tmap(packflat, M))
+end
+
+function loadM()
+    return tmap(unpackflat, deserialize("M.jls"))
+end
+
+function Msize()
+    return length([m for m in M if !isnothing(m)])
+end
 
 

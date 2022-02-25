@@ -1,0 +1,193 @@
+
+1/15/22: Core CFR loop complete (using optimal play-play, probably not correct). Runs in 3.5s.
+
+
+
+1/16/22: Moved all uses of canonical hands to arrays instead of tuples (canonicalize() saw something like a 100x speedup from this). ALSO got a new and very fast computer, to handle the larger database size. doCFR() (the full loop, using optimal play-play) now runs in 0.11s. Huge! This is probably fast enough for meaningful work. Still want to speed it up a lot; next plan is to precompute the play.
+
+
+
+1/18/22: Built playOutcomeMatrix overnight. Will speed up potential imperfect play algos. Current bottleneck though, is that solving the /second/ play is still as slow as the first, and doesn't benefit from an easy lookup table. Luckily, the ones after that are /much/ cheaper. Maybe alpha-beta can save this, but I doubt it -- ideally the entire CFR loop is less than 0.1s. If imperfect play is going to be required, then I need a new and clever idea.
+
+    - one potential route: maintain one tree throughout entire solve, and just update it? Naively you can just build the mega-tree that includes all possible hands based on each player's information, but that's gotta be way too huge. But maybe have a tree structure in place and change the *meaning* of each node, rather than rebuilding the tree, after each card is played? It should be possible to build a tree consisting of all possible /turn orders/ alone. The opponent's hand can be a linear combination (weights: probabilities) of all possible cards in that sorted position in the hand. This works because the # of cards in opp's hand is always known.
+    Q: Does perfect vs imperfect play solve affect optimal discard strat?
+
+    - 
+
+
+
+1/22/22: Rebuilt database using DataFrames. Made compatible with Arrow just in case.
+
+
+
+1/23/22: Rebuilt core loop: doCFR(). Updates all 3 strategy profiles. @btime doCFR() reports ~2ms. Cautiously optimistic. Need to do solveplay correctly, but it looks like with compilation this project is very, very doable. Accidentally ran about 30,000 hands just benchmarking. Holy shit.
+
+
+
+1/25/22: Improved tree building and scoring. Scoring all three methods is now as fast as scoring just margin used to be, PLUS: within the tree, all scores are calculated, rather than just at the leaves. I can use this to cache or precompute ALL play history scores (or just cache PlayNodes???). I *think* the new methods are compatible with doCFR() as written, just need to push them to main. 
+
+
+
+1/26/22: Realized that if there are 3 strategies (margin, greedy, and fast) then there are **9** pairings. Rather than continue to increase the complexity of the program, I resolve to TRAIN ONLY MARGIN vs MARGIN. After that project is successful, and using lessons learned, I can then adapt the code for the rest of the pairings, if I want.
+Also: realized how to precompute play hands. Push hand info to the nodes. When building the tree, have build! return the minmax value of its children and the play that leads to that value. Store that value in the parent (after the parent calls build! on its children). Cache the trio: (myHand, playHistory, outcome) using some scheme. (Maybe a sparse 3-D matrix).
+--> occasionally seeing weird values in node.outcome -- but never at the root. something funky with propagation.
+
+
+
+1/27/22: Fixed the scoring and propagating errors. Set up pre-caching. It's not going to fit in memory -- used 6GB on 2% of the calculation. Shit. Must solve in realtime, no way around it. OTOH, solved the scoring and propagation errors, and got the complete solve down to < 1ms. Best idea now is to build all possible trees right at the start, then use those same trees the rest of the play. probably about 2s per solve, per core. Don't love it.
+
+
+
+1/28/22: Having finished the "complete information" solver, I realize that that's never going to be what I need. I need to include the uncertainty within the tree. At least now I'll have something very concrete that I can optimize.
+
+
+
+1/29/22: I have written an incomplete information solver. It is far too slow. Far, far, far too slow. Either there's a cool trick I haven't though of or this won't work.
+
+
+
+1/30/22: Still holding onto hope for optimizing. Now there appears to be a memory leak though. Goal for tonight is to get the core loop complete, and then work on the play solver over time. Also need to recompute all complete info plays.
+Core loop is working. Perfect play matrix is constructed and implemented in doCFR(), which takes about 700us per loop. If I decide that perfect play is the only option, then we're at ~1000 iterations per second, which is fast enough to go. In that case, I would just need to wrap the loop in some periodic backup logic and let it rip.
+Logistics: Moved the play solve stuff into playUtils.jl. It was time. Three source files now, and probably that's enough. It was weird having scratch AND superscratch, need to get back to doing it right.
+
+
+
+1/31/22: New idea is CFR on the play as well. I think it will be "Chance-sampling" as mentioned in the monte carlo paper. If it's fast enough, I'll do the whole solve the first time I see the pair. Unlikely to be fast enough. More likely, I train once each cycle. As the discard profile converges, I'll see the relevant play trees more often, and the irrelevant ones less. I could even add a knob to do more play training as the discard profile converges? Anyway, I need to figure out if the information states will fit in memory. 
+An Information Set includes all the information one player has at any given moment, specifically about what the other player's hand is. Two situations are in the same IS if: they are indistinguishable to the player. So each possible play history, combined with the other player's knowledge of their own hand, the turn card(, and the cards played so far -- all that really matters is the play history, right?).
+Back-of-the-envelope suggests there are ~150M play histories? Times the number of 7-card rank hands. That's huge. But there's a ton of overlap there. So... maybe?
+
+
+
+2/2/22: After some thought, and some back-of-the-envelope calculations, I have ruled out the following: Using perfect play (no guarantee of convergence); Doing a full conditional solve every deal (too slow); Using CFR on the play (not enough storage). Conclusion: do a partial solve with incomplete info, taking a sample of possible hands rather than solving against all of them. This can be tunable by a dynamic parameter.
+Have written the sampling imperfect info play solver. taking 3 samples at every depth takes about 8 seconds. Consider dynamic sampling? Ideally we're sampling a lot more than 3! But at a depth of around 11, a branching factor of 3 is still very large. Currently doing a random sample; maybe should do the n most likely hands as well. At any rate, I have an imperfect solver that works!! NB: Each increase by one in the number of samples is about a 7x time increase, so far. yuk.
+
+
+
+2/3/22: trying to optimize the imperfect solver.
+Current ideas: 
+  -  Add dynamic sampling. This is only useful if I can get more 'accurate' results in the same time -- This is not really performance tuning at all.
+  -  I keep forgetting about alpha-beta
+If I can remove the GC calls, I can get a 25% speedup right away. That might be the best possible with this algorithm though, and that's still ~3s per matchup with a constant branch factor of 3.
+It's worth considering what the perfect solver counterpart would look like. How many counterfactual branches can I squeeze into the perfect solver? 
+Pruning potential hands looked promising but got very slow with the need to delete one card from each hand. Instead, moving to SVectors for potentialhands and trimming the ends to get playhands.
+
+In the meantime, I wrote a hybrid solver: it uses the perfect solver to calculate the expected value of each candidate play against all potential opponent hands. It runs in about 1s (without alpha-beta). This is probably the sweet spot? I'll have to find a convincing argument that this will still converge to an equilibrium, but it feels like it will. Everything hinges on how much the uncertainty affects actual play.
+
+Note: I tried removing the deepcopy calls. Mostly it's not faster without them. The one exception is that i switched to filtering for new potential hands, rather than generating them from scratch. This *is* faster. I also tried moving to StaticArrays where possible; this proved to be a real headache. I might try again in the future, but there are a lot of dumb corners where it was very inconvenient.
+
+I think my next goal should be moving to github, and then adding some convenience functions for tree traversal, db inspection, and so on. I want to sleep for a couple nights on whether a hybrid solver is good enough. If it is, then it's close to go time.
+
+
+2/4/22: Created a repository on Github.
+
+
+2/5/22: I think I've got a winner. I will precompute the entire tree for every play. If I only save the nodes where a genuine choice must be made (i.e., once both players are down to 1 card or fewer, don't save) then it should easily fit in memory. Then, no solving needs to happen in real time. Players can refer to the matrix of all possible play states to compute expected values and impute hand probabilities. The math will be more complicated, but I think it should still end up being much faster. This is all based on a back-of-the-enveleope calculation that each hand matchup should need around 288 nodes each (4x4x3x3x2). There are 3M of them, so that's about 1B nodes. If I use Int8s and only save the bare minimum, each node will need a vector of plays and vector of resulting values. On average there will be about 3 of each, so 6x8 bytes = 48 bytes per node (+ overhead, call it 100 bytes pessimistically). That's 100B bytes... still too much maybe. I'm gonna try implementing it and start counting bytes.
+UPDATE: I correctly predicted node size: About 44B each. I was underestimating the number of nodes though; on average it seems to be in the high hundreds or maybe even low thousands. summarysize is about 50kB per tree. Times 3M trees is 150GB. Still too big. But close!
+UPDATE: By only saving nodes where both players have meaningful choices, I can reduce this further to about 20kB. 60GB.
+New idea: Only precompute nodes with 3 meaningful choices. If both hands are size 2 or smaller, do it live. Precaching averages under 10kB per tree, i.e. 30GB, which would fit in memory. How fast is live solving from 2? With 2 cards each, @benchmark makes it ~5 microseconds. I could probably optimize the solver further too. 
+
+I have precached all plays for hands with 4 or 3 cards. The data is in perfectSolveMatrix.jls, serialized as an 1820x1820 matrix of Union{Nothing, SummaryNode}. It's time to build the solver.
+
+aaaaaand serialization is too slow. I have no idea why but it's just not practical. Maybe a different storage format?
+
+At any rate, I can build the solver and just build the trees from scratch for now, and work on the storage issue later. It took about 3 hours to generate the trees, so I can do that some night whenever I'd like.
+
+
+
+2/8/22: A couple days away from the project. I'm confident that a bayesian update is a sound approach. It requires building a *lot* of potential hand lists, so I've been thinking about how to make that more efficient. The answer is in two parts: 1) filtering and 2) counters. I've played with using counters for playhands before, but combining them with filtering gets building a fresh list of potential hands down to ~20 microseconds. So as I build the bayesian solver, I will be assuming all play hands are counters.
+
+I've also been thinking about the problem with trees, and specifically serializing them. I think instead I should consider a custom struct that implements a children dict. Each node gets an id, etc., matlab-style. And then each node can be a simple dict, mapping the play to the value.
+
+UPDATE: dicts ended up having too much overhead. The solution (in the next update) was tuples, and relying on stable ordering.
+
+
+
+2/12/22: I've got a data structure (MinimalNode) that should allow me to fit all trees in memory, including all nontrivial decision points (!). Each tree is on the order of 10kB. There are 2~3M trees, so in all that should be about 30GB. There's something weird happening with tmap when I try to generate it all at once, so instead I'm caching with gettree(). When I poll M for a tree that's not there, I generate it and store it in M. I'll serialize M at the end of each session, so it'll get built up over time. As a fun aside, I played with several different hare-brained compression schemes, including conversion to string (which is really really really efficient, storage-wise, but really really slow).
+
+I've also got optimalplay working. Pass a list of candidates, a list of MinimalNodes ** UPDATE: FlatTrees now **, and a list of probabilities, and it returns the play from candidates that has the highest expected value. It's pretty delicate; MinimalNode has *nothing* extra -- it's literally just a tuple of values and a tuple of MinimalNodes (its children) ** UPDATE: FlatTree has even less structure! **. In the actual bayesian solver, we'll need to trim every tree to a list of the correct MinimalNode corresponding to the play made from candidates. ** UPDATE: see advancetree() ** This will rely on candidates always being in the same order as they were when the MinimalNode was constructed. To enforce this, I'm sorting hands a lot, **especially** after calling countertovector().
+
+Together with the much faster filterpotentialhands(), a bayesian solver is shaping up to be actually fast!!! (once M is populated, anyway...)
+
+** By the way: The Indexing scheme for M is always (p1, p2) **
+
+OH NO: After just today's session, serializing M is sooooo slooooooow (30s for 21k trees). I've posted a question on Julia Discourse.
+If that doesn't work, I can compress trees into strings, and then compress with string compression libs for storage. I'm afraid the conversions and compressions are going to be too slow too though...
+
+
+
+2/13/22: Serialization is a no-go. One option is to write a custom serialize() function -- but it's not documented or even commented, so that would be a pain in the ass. Instead I have written a custom compressor, turning a MinimalNode tree into a flat vector and back again. The vectors should be faster to serialize. flattennode() and expandnode() appear to be inverse to each other. Flattening and Serializing is much much faster. Deserializing is faster too, but not as much. This is OK, and can be optimized later. I have added a loadM() and saveM() to dbUtils to transparently convert and (de)serialize M. Ready to rock!!!
+
+Began writing the full solver. Ran out of steam around 9pm after writing the cases with no trivial choices (length(candidates) < 2). Hopefully it's mostly bug-free; can't test that stuff til I do the meat. It's gonna be so slow at first, since I will be building so many trees. But I believe.
+
+
+
+2/17/22: Missed a couple days' recording in the changelog, but I've also missed a couple days for garage stuff. I've moved to FlatTree for my tree structure. Along with advancetree() it's just as good as an actual tree in about half the size. Unfortunately, although it's faster to serialize I'm now running into issues with size on disk. In memory, all trees (3.27M of them) are something like 30GB. But I canceled the thread after serialization was up over 60GB on disk. I suspect serialize() is converting all my Int8s and Int16s into Int64s (or maybe Int32s?) for serialization. Possibilities: Find a format that natively writes Int8s, or write a custom serializer to pack 8 Int8s into each 8-byte word.
+
+In the meantime, I'm writing the bayesian updater. It's very slow :( :( :( Looking like 10 minutes for one update -- not surprising once I see it written out, though. For each of the ~1800 potential hands, I'm looking at ~5000 potential deals and doing nontrivial work on each one. 9M calls is going to take a while, unfortunately. Possibilities: random sampling of potential deals. I've just added that (taking a sample of 100), and it sped up nicely -- and appears to have worked!!! the resulting updated probability vector *does* sum to (very nearly) 1, and is pretty sparse, indicating that we're ruling out a large number of hands. This will allow a pruning step after the probabilities are updated, where we can rule out (apparently many) hands which are otherwise technically possible.
+
+I'm calling this a qualified success. It still took about 10s just to run the updater. Something that is rather strange is, at least for this test set, almost all of the nonzero probabilities after the update are just a final segment of the vector (there's one stray toward the middle). What's that about?
+
+Update: in optimalplay, i'm finding that the length of the values tuple isn't always matching the length of the candidates passed in. Question for when I'm ready to focus again: should all the value tuples for all the model trees be the same length? (Yes, right? At least for a given potentialhand? So why aren't they?) OK, enough for now, starting to get foggy. Hopefully this bug yields easily tomorrow.
+
+
+
+
+2/18/22 (morning): As hoped, I figured out the problem overnight. I don't want to advancetrees() for the last card in history because that's the play i'm considering; from the point of view of the trees it hasn't happened yet.
+Note: First run is really really slow until M is filled. Once I get the solver working, I've GOT to figure out how to speed up serialization.
+Note: A single update (with only a 40-pdi sample) touches around 800,000 trees. It took about 20 minutes on first run to build & evaluate. Once the trees are loaded into M, the 40-pdi sample takes 6s.
+
+Note: M takes about 4GB in memory, and about 3GB on disk, using serialize. Using JLD2, the size ballooned -- probably JLD2 doesn't respect Int8s. A custom serializer for FlatTree, that flattens all the Tuples too, down to a single vector of Int8s, should be even faster and more compact.
+
+IDEA: Just as I'm already doing with the model probs, I could skip the PDI sampling entirely -- don't include the discard info when filtering the model; just use the full model once at the beginning. WIll save loads of time I'm sure. How closely will it match the full analysis?
+
+IDEA: when pulling PDIs, completely skip ones with approx. zero probability. There's no need to build trees, filter, etc., for a deal that is guaranteed to contribute 0.0 to P_ch.
+
+UPDATE: Idea 1 was a bust. The result was too many potential hands getting culled -- including, in at least one test case, the actual hand that the opponent had. It's ok if we're a little sloppy, but that's a bright line that definitely can't be crossed. Idea 2 was easy enough to add, but its benefits are theoretical right now -- I haven't written a solver that gets past the first iteration yet xD
+
+
+
+2/18/22 (afternoon): Implemented offsets into FlatTree. Implemented FlatPack for more efficient serialization of FlatTrees. Even with the overhead of packflat() and unpackflat(), saving and loading M is faster than straight serialization.
+
+Considering that the renormalization approach might be best for the conditional solver. Since the probabilities are at all times based on the db strategies (just not updated during play), it should still converge... to *something*. I have no idea whether it converges to an epsilon-solution though. Nor do I know if I could prove it either way...
+
+
+
+2/19: saving and loading M is reasonably fast now -- I didn't time it but with 810k trees it was around a minute or two. Hooray! The weird situation I noticed on 2/17 with the final segment of the vector is no longer happening. updateprobabilities looks like it's working correctly, just a bit slowly. Gotta speed it up.
+
+Wrote fastupdateprobabilities, which skips deal sampling and works only with the 4 cards in the possible playhand. It is filtering *a lot* -- like, 441 -> 3. Much more than the slow one. Don't know if it's a bug or just a consequence of this approach. It sure is fast though... If updateprobabilities is returning zero probability for the actual hand the opponent has, it's out. And it is. updateprobabilities() doesn't have the problem, so i guess i need to optimize it instead.
+
+Other option: Solve naively; never update probabilities except to renormalize them when hands are taken off the potentials list.
+
+
+2/19/22 (evening): Wrote a naive solver. Having some issues with advancing the FlatTrees in opponent's potentialhands. Sometimes it works, and sometimes it doesn't, and I don't know why. It doesn't help that FlatTrees have zero context coming along with them to help. But there's no doubt that when I build a FlatTree, the output from advancetree(ft, ci) corresponds correctly to the output of MinimalNode.childnodes[ci], for every instance that I've cared to check. Which means one of two things is happening: 1) The wrong trees are in potentialtrees[3-owner], or 2) they're being advanced incorrectly.
+
+I'm thinking I ought to get rid of the recursive solver entirely -- for this solution method, where the optimal play is calculated not by recursive calls but instead by calls to optimalplay, the solution is not built from a tree but rather a path (i.e., successor replaces children). I could wrap the struct up inside a function, run a while-loop, and achieve the same effect, with significantly less GC involvement. Also less typing overhead. That's my plan for next session.
+
+
+
+2/22/22: I believe the bugs are gone from naivesolve(). Now I believe I've found a bug in makeflat(), which comes up when a MinimalNode has childvalues but no childnodes. I'll sort it out tomorrow probably.
+UPDATE: I may have sorted it already. Found a new bug in naivesolve, where I'm trying to advance trees at the end of the line!
+UPDATE: Sorted! naivesolve() seems to be working!!! Finishing the night with a @btime: 447 ms. That's doable already!!
+In the meantime, I'm thinking that it may be more performant to add a counter to FlatTree, and make it mutable. This will avoid a lot of garbage collection, as I am collecting and reallocating every single tree every single step with advancetree().
+
+
+2/25/22: Stuck at work for the afternoon. Can't do any real work (this awful computer...) but I am cleaning up the files / moving things around / removing semicolons etc. It did occur to me previously to use a vector of counters instead of modifying the FlatTree struct. The counters can come along for the ride just like the probs, etc. Then I won't have to do as much GC when I'm replacing all the trees with their advanced versions.
+
+Another performance thought: getPossibleHandIndices is probably much slower than getPossibleHands because it uses findall instead of filter. I need to find a way to avoid that; the problem is if I filter just opphands then I have no way to match trees and probs. Perhaps I need a struct to represent those, say a Model? Added to the TODOs.
+
+
+
+
+******* TODO *******
+********************
+
+
+TODO: Move FlatTree to a mutable struct and add a counter for current location. This will add a little overhead, but it's all in-memory... and will reduce garbage collection time in naivesolve significantly.
+UPDATE: Don't modify the struct. Just use a vector of ints inside the solver that point to the current location on each tree. Advancing the trees will just be updating those ints.
+|
+|
+TODO: Combine opphands, probs, trees, and the new pointer vector mentioned above into a StateModel struct. This way I can filter the whole struct once and update all relevant values in one step. Might even speed up the bayesian solve. This will affect optimalplay() as well.
+
+
+TODO: Move db to smaller integers for storage purposes. Int8 works for all card ranks (in playhands and discards). Int32 is probably plenty for playcounts. Come to think of it, I probably don't actually need the playhand column at all.
+
