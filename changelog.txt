@@ -177,15 +177,21 @@ Another performance thought: getPossibleHandIndices is probably much slower than
 
 
 
-2/26/22: Feeling dumb, have been staring at a very stupid bug for a very long time (it was in the FlatTree spec. Not sure why I never caught it... or maybe i've introduced a new bug?). Updated naiveplay() according to the last TODO, and... it worked like a charm. naiveplay() is now benchmarking at around 4.5 ms. It occurs to me that I forgot to write optimalplay... 1 sec. OK fixed it, now it benchmarks at 4.5ms. N I C E
+2/26/22: Feeling dumb, have been staring at a very stupid bug for a very long time (with the move to ModelState, the FlatTree advance mechanism is different; tree.links now represents offsets as opposed to absolute indices). With that solved, I have updated naiveplay() according to the last TODO, and... it worked like a charm. naiveplay() is now benchmarking at around 4.5 ms. It occurs to me that I forgot to write optimalplay... 1 sec. OK fixed it, now it benchmarks at 4.5ms. N I C E
 
-The question now is: should I still write a bayesian solver? Or is this good? I could declare victory, finish building the infrastructure, and let CFRibbage CFRip. The answer has to be no, I think. I have to at least *try* the bayesian solver. It's possible that with the move to ModelState it speeds up enough. Unlikely.
+The question now is: should I still write a bayesian solver? Or is this good? I could declare victory, finish building the infrastructure, and let CFRibbage CFRip. The answer has to be no, I think. I have to at least *try* the bayesian solver. It's possible that the move to ModelState it speeds up enough. Unlikely.
+
+Either way, I will deliver (myself) a minimal working product.
 
 
 
 
 ******* TODO *******
 ********************
+
+
+TODO: Currently in optimalplay, advancestate(), and probably others, I am calling something like [ms.field for ms in model]. I think it would be faster to use a Tables.jl format, so I can access the model column-wise and just say model.field.
+STATUS: Low priority. naivesolve() is already pretty quick. If bayesiansolve() is on the edge of fast enough, it's worth looking at this optimization.
 
 
 
