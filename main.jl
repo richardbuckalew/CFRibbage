@@ -1,8 +1,5 @@
 using Combinatorics, Serialization, IterTools, ProgressMeter, StatsBase, ProfileView, BenchmarkTools
-using DataStructures, Random, DataFrames, ThreadTools
-
-include("playUtils.jl");
-include("dbUtils.jl");
+using DataStructures, Random, DataFrames, ThreadTools, Infiltrator
 
 
 struct Card
@@ -48,33 +45,65 @@ end
 (@isdefined handsuits) || (handsuits(h::Vector{Card}) = sort([c.suit for c in h]));
 
 
+const hType = Accumulator{Int64, Int64}
+const handType = Union{
+    Tuple{Tuple{Int64, Int64, Int64, Int64, Int64, Int64}, Tuple{}, Tuple{}, Tuple{}},
+    Tuple{Tuple{Int64, Int64, Int64, Int64, Int64}, Tuple{Int64}, Tuple{}, Tuple{}},
+    Tuple{Tuple{Int64, Int64, Int64, Int64}, Tuple{Int64, Int64}, Tuple{}, Tuple{}},
+    Tuple{Tuple{Int64, Int64, Int64, Int64}, Tuple{Int64}, Tuple{Int64}, Tuple{}},
+    Tuple{Tuple{Int64, Int64, Int64}, Tuple{Int64, Int64, Int64}, Tuple{}, Tuple{}},
+    Tuple{Tuple{Int64, Int64, Int64}, Tuple{Int64, Int64}, Tuple{Int64}, Tuple{}},
+    Tuple{Tuple{Int64, Int64, Int64}, Tuple{Int64}, Tuple{Int64}, Tuple{Int64}},
+    Tuple{Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{}},
+    Tuple{Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{Int64}, Tuple{Int64}}
+}
+const discardType = Union{
+    Tuple{Tuple{Int64, Int64}, Tuple{}, Tuple{}, Tuple{}},
+    Tuple{Tuple{}, Tuple{Int64, Int64}, Tuple{}, Tuple{}},
+    Tuple{Tuple{}, Tuple{}, Tuple{Int64, Int64}, Tuple{}},
+    Tuple{Tuple{}, Tuple{}, Tuple{}, Tuple{Int64, Int64}},
+    Tuple{Tuple{Int64}, Tuple{Int64}, Tuple{}, Tuple{}},
+    Tuple{Tuple{Int64}, Tuple{}, Tuple{Int64}, Tuple{}},
+    Tuple{Tuple{Int64}, Tuple{}, Tuple{}, Tuple{Int64}},
+    Tuple{Tuple{}, Tuple{Int64}, Tuple{Int64}, Tuple{}},
+    Tuple{Tuple{}, Tuple{Int64}, Tuple{}, Tuple{Int64}},
+    Tuple{Tuple{}, Tuple{}, Tuple{Int64}, Tuple{Int64}},
+}
+
+
+include("playUtils.jl");
+include("dbUtils.jl");
+
+
+
+
 # (@isdefined db) || (const db = deserialize("db.jls"));
 # (@isdefined handID) || (const handID = deserialize("handID.jls"));  # Tuple => NTuple{2, Int64}
-# (@isdefined allPH) || (const allPH = deserialize("allPH.jls"));     # Vector{Counter}
-# (@isdefined phID) || (const phID = deserialize("phID.jls"));        # Counter => Int64
+(@isdefined allPH) || (const allPH = deserialize("allPH.jls"));     # Vector{Counter}
+(@isdefined phID) || (const phID = deserialize("phID.jls"));        # Counter => Int64
 # (@isdefined phRows) || (const phRows = deserialize("phRows.jls"));  # Counter => Vector{Int64}
-# (@isdefined M) || (@time global M = loadM());
+(@isdefined M) || (@time global M = loadM());
 
 
 
 
 function canonicalize(h::Vector{Card})
-    H = [[c.rank for c in h if c.suit == ii] for ii in 1:4];
-    sort!.(H);  # sort each suit
-    sp1 = sortperm(H);   # sort suits lexicographically
-    H = H[sp1];
-    sp2 = sortperm(H, by = length, rev = true);  # subsort by length, longest to shortest
-    H = H[sp2];
-    sp = sp1[sp2]; # suit permutation (for reconstructing h)
-    return (Tuple(Tuple.(H)), sp);
+    H = [[c.rank for c in h if c.suit == ii] for ii in 1:4]
+    sort!.(H)  # sort each suit
+    sp1 = sortperm(H)   # sort suits lexicographically
+    H = H[sp1]
+    sp2 = sortperm(H, by = length, rev = true)  # subsort by length, longest to shortest
+    H = H[sp2]
+    sp = sp1[sp2] # suit permutation (for reconstructing h)
+    return (Tuple(Tuple.(H)), sp)
 end
 
 function unCanonicalize(h, sp)
-    hand = Card[];
+    hand = Card[]
     for (ii, s) in enumerate(sp)
         for r in h[ii]
-            (r == 0) && continue;
-            push!(hand, Card(r, s));
+            (r == 0) && continue
+            push!(hand, Card(r, s))
         end
     end
     return hand
@@ -82,48 +111,48 @@ end
 
 function scoreShow(h::Vector{Card}, turn::Card; isCrib = false)
 
-    cCombs = collect.([combinations(vcat(h,[turn]), ii) for ii in 2:(length(h)+1)]);
+    cCombs = collect.([combinations(vcat(h,[turn]), ii) for ii in 2:(length(h)+1)])
 
-    ranks = sort(vcat(handranks(h), handranks([turn])));
-    rCombs = [[handranks(c) for c in comb] for comb in cCombs];
+    ranks = sort(vcat(handranks(h), handranks([turn])))
+    rCombs = [[handranks(c) for c in comb] for comb in cCombs]
 
-    nPairs = count([x[1] == x[2] for x in rCombs[1]]);
-    pairScore = 2 * nPairs;
+    nPairs = count([x[1] == x[2] for x in rCombs[1]])
+    pairScore = 2 * nPairs
     # display("pairs: " * string(pairScore))
 
-    nRuns = 0;
-    runLength = 0;
+    nRuns = 0
+    runLength = 0
     for ell in (length(ranks)-1):-1:2
-        runLength = ell + 1;
+        runLength = ell + 1
         adjRanks = [r .- minimum(r) .+ 1 for r in rCombs[ell]]
-        nRuns = count(map(isequal(collect(1:runLength)), adjRanks));
-        (nRuns > 0) && break;
+        nRuns = count(map(isequal(collect(1:runLength)), adjRanks))
+        (nRuns > 0) && break
     end
-    runScore = nRuns * runLength;
+    runScore = nRuns * runLength
     # display("runs: " * string(runScore))
     
-    vCombs = [[cardvalues[c] for c in comb] for comb in rCombs];
-    S = sum.(vcat(vCombs...));
-    nFifteens = count(S .== 15);
-    fifteenScore = 2 * nFifteens;
-    # display("fifteens: " * string(fifteenScore));
+    vCombs = [[cardvalues[c] for c in comb] for comb in rCombs]
+    S = sum.(vcat(vCombs...))
+    nFifteens = count(S .== 15)
+    fifteenScore = 2 * nFifteens
+    # display("fifteens: " * string(fifteenScore))
 
 
     if isCrib
-        suits = sort([c.suit for c in h]);
+        suits = sort([c.suit for c in h])
     else
-        suits = sort([c.suit for c in vcat(h, [turn])]);
+        suits = sort([c.suit for c in vcat(h, [turn])])
     end
-    flushScore = 0;
+    flushScore = 0
     for ell in length(suits):-1:4
-        sCombs = collect(combinations(suits, ell));
+        sCombs = collect(combinations(suits, ell))
         sLens = length.(Set.(sCombs))
         if any(sLens .== 1)
-            flushScore = ell;
-            break;
+            flushScore = ell
+            break
         end
     end
-    # display("flush: " * string(flushScore));
+    # display("flush: " * string(flushScore))
 
     return pairScore + runScore + fifteenScore + flushScore
 
@@ -131,15 +160,11 @@ function scoreShow(h::Vector{Card}, turn::Card; isCrib = false)
 end
 
 function dealHands(deck = standardDeck, handSize = 6)
-    dealtCards = sample(deck, handSize * 2 + 1, replace = false);
-    h1 = dealtCards[1:handSize];
-    h2 = dealtCards[handSize+1:2*handSize];
-    turn = dealtCards[end];
-    return (h1, h2, turn);
-end
-
-function resolveplay(h1, h2, phID, M)
-    return M[phID[h1], phID[h2]];
+    dealtCards = sample(deck, handSize * 2 + 1, replace = false)
+    h1 = dealtCards[1:handSize]
+    h2 = dealtCards[handSize+1:2*handSize]
+    turn = dealtCards[end]
+    return (h1, h2, turn)
 end
 
 function makeCrib(d1, d2)

@@ -1,46 +1,46 @@
 
 
-const CC = collect.([combinations(cardranks, ii) for ii in 0:6]);
+(@isdefined CC) || (const CC = collect.([combinations(cardranks, ii) for ii in 0:6]))
 function newSuits(H)
 
-    nSuit = length(H) + 1;
-    (nSuit > 1) ? (cardsleft = 6 - sum(length.(H))) : (cardsleft = 6);
-    (cardsleft == 0) && (return []);
+    nSuit = length(H) + 1
+    (nSuit > 1) ? (cardsleft = 6 - sum(length.(H))) : (cardsleft = 6)
+    (cardsleft == 0) && (return [])
 
-    NS = [];
+    NS = []
 
     if nSuit == 1
-        m = 2;
-        M = 6;
+        m = 2
+        M = 6
     elseif 1 < nSuit < 4
-        m = Int(ceil(cardsleft / (4 - nSuit + 1)));
-        M = cardsleft;
+        m = Int(ceil(cardsleft / (4 - nSuit + 1)))
+        M = cardsleft
     else
-        m = cardsleft;
-        M = cardsleft;
+        m = cardsleft
+        M = cardsleft
     end
 
     for suitSize in m:M
-        append!(NS, CC[suitSize+1]);
+        append!(NS, CC[suitSize+1])
     end
 
-    return NS;
+    return NS
 
 end
 
 function addSuit(HH)
 
 
-    newHH = Set([]);
+    newHH = Set([])
 
     for H in HH
-        NS = newSuits(H);
-        (length(NS) == 0) && push!(newHH, copy(H));
+        NS = newSuits(H)
+        (length(NS) == 0) && push!(newHH, copy(H))
         for ns in NS
-            G = copy(H);
-            push!(G, ns);
-            sort!(sort!(G), by = length);
-            push!(newHH, G);
+            G = copy(H)
+            push!(G, ns)
+            sort!(sort!(G), by = length)
+            push!(newHH, G)
         end
     end
 
@@ -51,7 +51,7 @@ end
 function getDiscards(H) ## Discard format: A tuple of tuples, one for each suit in the canonical form of the hand. 
                         ## Respects canonical suit order on a per-hand basis
 
-    D = [];
+    D = []
 
     for (i1, i2) in combinations(1:4,2)
         (isempty(H[i1]) || isempty(H[i2])) && continue;
@@ -59,11 +59,11 @@ function getDiscards(H) ## Discard format: A tuple of tuples, one for each suit 
         for (c1, c2) in product(H[i1], H[i2])
 
             d = [[] ,[], [], []];
-            d[i1] = [c1];
-            d[i2] = [c2];
+            d[i1] = [c1]
+            d[i2] = [c2]
 
             # push!(D, d);
-            push!(D, Tuple(Tuple.(d)));
+            push!(D, Tuple(Tuple.(d)))
 
         end
     end
@@ -71,14 +71,14 @@ function getDiscards(H) ## Discard format: A tuple of tuples, one for each suit 
     for s in unique(H)
         isempty(s) && continue;
 
-        ii = findfirst(Ref(s) .== H);
-        (length(s) < 2) && continue;
+        ii = findfirst(Ref(s) .== H)
+        (length(s) < 2) && continue
         for (c1, c2) in combinations(s, 2)
-            d = [[], [], [], []];
-            d[ii] = [c1, c2];
+            d = [[], [], [], []]
+            d[ii] = [c1, c2]
 
             # push!(D, d);
-            push!(D, Tuple(Tuple.(d)));
+            push!(D, Tuple(Tuple.(d)))
         end
     end
 
@@ -87,21 +87,21 @@ function getDiscards(H) ## Discard format: A tuple of tuples, one for each suit 
 end
 
 function getPlayHand(h, d)
-    return  Tuple(sort(vcat([Array(setdiff(h[ii], d[ii])) for ii in 1:4]...)));
+    return  Tuple(sort(vcat([Array(setdiff(h[ii], d[ii])) for ii in 1:4]...)))
 end
 
 function dealAllHands()
 
     # dealCounts = Dict{Any, Int64}();
     dealCounts = counter(Vector{Vector{Int64}})
-    deck = standardDeck;
+    deck = standardDeck
 
 
     for comb in combinations(deck, 6)
 
-        (H, sp) = canonicalize(comb);
+        (H, sp) = canonicalize(comb)
 
-        inc!(dealCounts, H);
+        inc!(dealCounts, H)
         # _ = get!(dealCounts, H, 0);
         # dealCounts[H] += 1;
 
@@ -111,33 +111,10 @@ function dealAllHands()
 
 end
 
-generateAllHands() = [[]] |> addSuit |> addSuit |> addSuit |> addSuit;
+generateAllHands() = [[]] |> addSuit |> addSuit |> addSuit |> addSuit
 
 
-const hType = Accumulator{Int64, Int64}
-const handType = Union{
-    Tuple{Tuple{Int64, Int64, Int64, Int64, Int64, Int64}, Tuple{}, Tuple{}, Tuple{}},
-    Tuple{Tuple{Int64, Int64, Int64, Int64, Int64}, Tuple{Int64}, Tuple{}, Tuple{}},
-    Tuple{Tuple{Int64, Int64, Int64, Int64}, Tuple{Int64, Int64}, Tuple{}, Tuple{}},
-    Tuple{Tuple{Int64, Int64, Int64, Int64}, Tuple{Int64}, Tuple{Int64}, Tuple{}},
-    Tuple{Tuple{Int64, Int64, Int64}, Tuple{Int64, Int64, Int64}, Tuple{}, Tuple{}},
-    Tuple{Tuple{Int64, Int64, Int64}, Tuple{Int64, Int64}, Tuple{Int64}, Tuple{}},
-    Tuple{Tuple{Int64, Int64, Int64}, Tuple{Int64}, Tuple{Int64}, Tuple{Int64}},
-    Tuple{Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{}},
-    Tuple{Tuple{Int64, Int64}, Tuple{Int64, Int64}, Tuple{Int64}, Tuple{Int64}}
-}
-const discardType = Union{
-    Tuple{Tuple{Int64, Int64}, Tuple{}, Tuple{}, Tuple{}},
-    Tuple{Tuple{}, Tuple{Int64, Int64}, Tuple{}, Tuple{}},
-    Tuple{Tuple{}, Tuple{}, Tuple{Int64, Int64}, Tuple{}},
-    Tuple{Tuple{}, Tuple{}, Tuple{}, Tuple{Int64, Int64}},
-    Tuple{Tuple{Int64}, Tuple{Int64}, Tuple{}, Tuple{}},
-    Tuple{Tuple{Int64}, Tuple{}, Tuple{Int64}, Tuple{}},
-    Tuple{Tuple{Int64}, Tuple{}, Tuple{}, Tuple{Int64}},
-    Tuple{Tuple{}, Tuple{Int64}, Tuple{Int64}, Tuple{}},
-    Tuple{Tuple{}, Tuple{Int64}, Tuple{}, Tuple{Int64}},
-    Tuple{Tuple{}, Tuple{}, Tuple{Int64}, Tuple{Int64}},
-}
+
 
 
 function buildDB(hands, probs)

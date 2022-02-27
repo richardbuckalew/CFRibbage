@@ -16,7 +16,7 @@ mutable struct PlayState
     bestplay::Int64;
 end
 function Base.show(io::IO, ps::PlayState)
-    print(io, "PlayState (owner ", ps.owner, ")");
+    print(io, "PlayState (p", ps.owner, "), values: ", [c.value for c in ps.children]);
 end
 function Base.show(io::IO, ::MIME"text/plain", ps::PlayState)
     print(io, "PlayState (p", ps.owner, ")\n");
@@ -160,7 +160,7 @@ function makeflat(mn::MinimalNode)
             for (ii, c) in enumerate(s.childnodes)
                 push!(Q, c)
                 push!(v, s.childvalues[ii])
-                push!(l, length(Q)+1)
+                push!(l, length(Q))
             end
             push!(V, Tuple(v))
             push!(L, Tuple(l))
@@ -171,6 +171,36 @@ function makeflat(mn::MinimalNode)
 end
 
 
+
+
+
+
+mutable struct ModelState       ## later optimization: Store columnwise so it's easy to access model.probs etc.
+    hand::hType
+    tree::FlatTree
+    ptr::Int64
+    prob::Float64
+end
+function advancestate!(ms::ModelState, cindex::Int64)
+    ms.ptr += ms.tree.links[ms.ptr][cindex]
+end
+
+function optimalplay(candidates::Vector{Int64}, model::Vector{ModelState}, whoseturn::Int64)
+    EVs = zeros(Float64, length(candidates));
+    for ii in 1:length(candidates)
+        EVs[ii] = sum([ms.tree.values[ms.ptr][ii] for ms in model] .* [ms.prob for ms in model])
+    end
+    (whoseturn == 1) ? ((m, mi) = findmax(EVs)) : ((m, mi) = findmin(EVs));
+    return (mi, candidates[mi]);
+end
+
+
+function renormalize!(model::Vector{ModelState})
+    s = sum([ms.prob for ms in model])
+    for ms in model
+        ms.prob /= s
+    end
+end
 
 function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}, turnrank::Int64)
 
@@ -188,6 +218,14 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
     opphands = [getPotentialHands(counter(Int64[]), seen[ii], deepcopy(allPH)) for ii in (1, 2)]
     trees = [[(ii == 1) ? (gettree(counter(hands[ii]), oh)) : (gettree(oh, counter(hands[ii]))) for oh in opphands[ii]] for ii in (1, 2)]
     probs = [ones(Float64, length(trees[ii])) ./ length(trees[ii]) for ii in (1, 2)]
+
+    models = [Vector{ModelState}(), Vector{ModelState}()]
+    for n in 1:length(opphands[1])
+        push!(models[1], ModelState(counter(opphands[1][n]), trees[1][n], 1, probs[1][n]))
+    end
+    for n in 1:length(opphands[2])
+        push!(models[2], ModelState(counter(opphands[2][n]), trees[2][n], 1, probs[2][n]))
+    end
 
 
     while true
@@ -224,13 +262,13 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
             for r in 1:(31-total)
                 seen[3-whoseturn][r] = 4
             end
-            PHI = [xi for (xi, x) in enumerate(opphands[3-whoseturn]) if all([x[r] == 0 for r in 1:(31-total)])]
-            opphands[3-whoseturn] = opphands[3-whoseturn][PHI]
-            trees[3-whoseturn] = trees[3-whoseturn][PHI]
-            trees[3-whoseturn] = advancetree.(trees[3-whoseturn], 1)           ## all trees should be at GO nodes
-            trees[whoseturn] = advancetree.(trees[whoseturn], 1)                
 
-            # print("Play: GO\n\n")
+            models[3-whoseturn] = [ms for ms in models[3-whoseturn] if all([ms.hand[r] == 0 for r in 1:(31-total)])]
+            renormalize!(models[3-whoseturn])
+            advancestate!.(models[3-whoseturn], 1)
+            advancestate!.(models[whoseturn], 1)
+
+
 
         elseif length(candidates) == 1
             c = candidates[1]
@@ -243,44 +281,39 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
 
             inc!(seen[3-whoseturn], c)
             inc!(played[whoseturn], c)
-            PHI = [xi for (xi, x) in enumerate(opphands[3-whoseturn]) if x[c] > 0]
-            opphands[3-whoseturn] = opphands[3-whoseturn][PHI]
-            trees[3-whoseturn] = trees[3-whoseturn][PHI]
-            for (ii, oh) in enumerate(opphands[3-whoseturn])
-                ci = getcandindex(oh, c)
-                trees[3-whoseturn][ii] = advancetree(trees[3-whoseturn][ii], ci)
+
+            models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
+            renormalize!(models[3-whoseturn])
+            for ms in models[3-whoseturn]
+                ci = getcandindex(ms.hand, c)
+                advancestate!(ms, ci)
+                dec!(ms.hand, c)
             end
-            dec!.(opphands[3-whoseturn], c)
-            renormalize!(probs[3-whoseturn])
             if length(hands[whoseturn]) > 1
-                trees[whoseturn] = advancetree.(trees[whoseturn], 1)                ## the hand owner knows their cpath already
+                advancestate!.(models[whoseturn], 1)
             end
-            
-            # print("Play: ", c, "\n\n")                                                                      
+                                                                    
 
         else
-            (candindex, c, ev) = optimalplay(candidates, trees[whoseturn], probs[whoseturn], whoseturn)
+            (cindex, c) = optimalplay(candidates, models[whoseturn], whoseturn)
             total += cardvalues[c]
             (length(history) > 0) ? (diffs = vcat(diffs, [c-history[end]])) : (diffs = Int64[])     
             (s, pairlength, runlength) = scoreplay(c, history, diffs, total, pairlength, runlength) ## It is important that diffs has been updated but history has not ##
             scores[whoseturn] += s
-            deleteat!(hands[whoseturn], handindex[candindex])
+            deleteat!(hands[whoseturn], handindex[cindex])
             push!(history, c) 
 
             inc!(seen[3-whoseturn], c)
             inc!(played[whoseturn], c)
-            PHI = [xi for (xi, x) in enumerate(opphands[3-whoseturn]) if x[c] > 0]
-            opphands[3-whoseturn] = opphands[3-whoseturn][PHI]
-            trees[3-whoseturn] = trees[3-whoseturn][PHI]
-            for (ii, oh) in enumerate(opphands[3-whoseturn])
-                ci = getcandindex(oh, c)
-                trees[3-whoseturn][ii] = advancetree(trees[3-whoseturn][ii], ci)
+            
+            models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
+            renormalize!(models[3-whoseturn])
+            for ms in models[3-whoseturn]
+                ci = getcandindex(ms.hand, c)
+                advancestate!(ms, ci)
+                dec!(ms.hand, c)
             end
-            dec!.(opphands[3-whoseturn], c)
-            renormalize!(probs[3-whoseturn])
-            trees[whoseturn] = advancetree.(trees[whoseturn], candindex)                ## the hand owner knows their cpath already     
-
-            # print("Play: ", c, "\n\n") 
+            advancestate!.(models[whoseturn], cindex)
 
         end
         whoseturn = 3 - whoseturn
