@@ -109,7 +109,7 @@ function showtree(mn::MinimalNode; depth = 0)
     end
 end
 
-function minimize!(ps::PlayState, mn::MinimalNode)
+function minimize!(ps::PlayState, mn::MinimalNode)::Nothing
     isempty(ps.children) && (return nothing)
     # (all(length.(ps.hands) .<= 1)) && (return nothing);       ## removed to fix a bug in FlatTree advancement. 
                                                                 ## NOT strictly necessary; we can re-add this line if we also
@@ -128,6 +128,7 @@ function minimize!(ps::PlayState, mn::MinimalNode)
     if isempty(mn.childnodes[1].childvalues)
         mn.childnodes = ()
     end
+    return nothing
 end
 
 
@@ -188,7 +189,8 @@ end
 function optimalplay(candidates::Vector{Int64}, model::Vector{ModelState}, whoseturn::Int64)
     EVs = zeros(Float64, length(candidates));
     for ii in 1:length(candidates)
-        EVs[ii] = sum([ms.tree.values[ms.ptr][ii] for ms in model] .* [ms.prob for ms in model])
+        # EVs[ii] = sum([ms.tree.values[ms.ptr][ii] for ms in model] .* [ms.prob for ms in model])
+        EVs[ii] = dot([ms.tree.values[ms.ptr][ii] for ms in model], [ms.prob for ms in model])
     end
     (whoseturn == 1) ? ((m, mi) = findmax(EVs)) : ((m, mi) = findmin(EVs));
     return (mi, candidates[mi]);
@@ -217,15 +219,22 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
 
     opphands = [getPotentialHands(counter(Int64[]), seen[ii], deepcopy(allPH)) for ii in (1, 2)]
     trees = [[(ii == 1) ? (gettree(counter(hands[ii]), oh)) : (gettree(oh, counter(hands[ii]))) for oh in opphands[ii]] for ii in (1, 2)]
-    probs = [ones(Float64, length(trees[ii])) ./ length(trees[ii]) for ii in (1, 2)]
+    # probs = [ones(Float64, length(trees[ii])) ./ length(trees[ii]) for ii in (1, 2)]
 
     models = [Vector{ModelState}(), Vector{ModelState}()]
     for n in 1:length(opphands[1])
-        push!(models[1], ModelState(counter(opphands[1][n]), trees[1][n], 1, probs[1][n]))
+        push!(models[1], ModelState(counter(opphands[1][n]), trees[1][n], 1, 1.0))
     end
     for n in 1:length(opphands[2])
-        push!(models[2], ModelState(counter(opphands[2][n]), trees[2][n], 1, probs[2][n]))
+        push!(models[2], ModelState(counter(opphands[2][n]), trees[2][n], 1, 1.0))
     end
+    setinitialprobs!(models[1], 2)
+    setinitialprobs!(models[2], 1)
+
+
+    filter!(ms->(ms.prob > 0.0), models[1])
+    filter!(ms->(ms.prob > 0.0), models[2])
+    
 
 
     while true
@@ -236,8 +245,6 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
         end
 
         # print("p", whoseturn, "'s turn with ", hands[whoseturn], ".\n  total: ", total, "\n  history: ", history, "\n  scores: ", scores, "\n")
-
-
 
         candidates = Int64[]
         handindex = Int64[]
@@ -286,7 +293,9 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
             renormalize!(models[3-whoseturn])
             for ms in models[3-whoseturn]
                 ci = getcandindex(ms.hand, c)
-                advancestate!(ms, ci)
+                if length(hands[3-whoseturn]) > 1
+                    advancestate!(ms, ci)
+                end
                 dec!(ms.hand, c)
             end
             if length(hands[whoseturn]) > 1
@@ -310,7 +319,13 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
             renormalize!(models[3-whoseturn])
             for ms in models[3-whoseturn]
                 ci = getcandindex(ms.hand, c)
-                advancestate!(ms, ci)
+                try
+                    if length(hands[3-whoseturn]) > 1
+                        advancestate!(ms, ci)
+                    end
+                catch
+                    @infiltrate
+                end
                 dec!(ms.hand, c)
             end
             advancestate!.(models[whoseturn], cindex)
@@ -323,7 +338,24 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
 
 end
 
-
+function setinitialprobs!(model::Vector{ModelState}, player::Int64)
+    for ms in model
+        if player == 1
+            ms.prob = phDealerProbs[ms.hand]
+        else
+            ms.prob = phPoneProbs[ms.hand]
+        end
+    end
+    # for ms in model
+    #     dbrows = @inbounds phRows[ms.hand]        
+    #     if player == 1
+    #         v = @view db.dealerplayprob[dbrows]
+    #     else
+    #         v = @view db.poneplayprob[dbrows]
+    #     end
+    #     ms.prob = sum(v)
+    # end
+end
 
 
 

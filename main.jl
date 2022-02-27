@@ -1,6 +1,8 @@
 using Combinatorics, Serialization, IterTools, ProgressMeter, StatsBase, ProfileView, BenchmarkTools
-using DataStructures, Random, DataFrames, ThreadTools, Infiltrator
+using DataStructures, Random, DataFrames, ThreadTools, Infiltrator, LinearAlgebra, TimerOutputs
 
+
+# (@isdefined to) || (const to = TimerOutput())
 
 struct Card
     rank::Int64;
@@ -76,13 +78,14 @@ include("dbUtils.jl");
 
 
 
-
-# (@isdefined db) || (const db = deserialize("db.jls"));
-# (@isdefined handID) || (const handID = deserialize("handID.jls"));  # Tuple => NTuple{2, Int64}
-(@isdefined allPH) || (const allPH = deserialize("allPH.jls"));     # Vector{Counter}
-(@isdefined phID) || (const phID = deserialize("phID.jls"));        # Counter => Int64
-# (@isdefined phRows) || (const phRows = deserialize("phRows.jls"));  # Counter => Vector{Int64}
-(@isdefined M) || (@time global M = loadM());
+(@isdefined db) || (@time const db = deserialize("db.jls"))
+(@isdefined phDealerProbs) || (@time const phDealerProbs = deserialize("phDealerProbs.jls"))
+(@isdefined phPoneProbs) || (@time const phPoneProbs = deserialize("phPoneProbs.jls"))
+(@isdefined handID) || (@time const handID = deserialize("handID.jls"))  # Tuple => NTuple{2, Int64}
+(@isdefined allPH) || (@time const allPH = deserialize("allPH.jls"))     # Vector{Counter}
+(@isdefined phID) || (@time const phID = deserialize("phID.jls"))        # Counter => Int64
+(@isdefined phRows) || (@time const phRows = deserialize("phRows.jls"))  # Counter => Vector{Int64}
+(@isdefined M) || (@time global M = loadM())
 
 
 
@@ -168,75 +171,120 @@ function dealHands(deck = standardDeck, handSize = 6)
 end
 
 function makeCrib(d1, d2)
-    return vcat(d1, d2);
+    return vcat(d1, d2)
+end
+function stripsuits(D::discardType)::Vector{Int64}
+    return vcat([[x...] for x in D]...);
 end
 
-function doCFR(db, hID, phID, M)
 
-    (h1Cards, h2Cards, turnCard) = dealHands();
+function doCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turnCard::Card)
 
-    (h1, sp1) = canonicalize(h1Cards);
-    (h2, sp2) = canonicalize(h2Cards);
+    # Random.seed!(12345)
 
-    hi1 = hID[h1];
-    h1Rows = hi1[1]:hi1[2];
-    hi2 = hID[h2];
-    h2Rows = hi2[1]:hi2[2];
+    # (h1Cards, h2Cards, turnCard) = dealHands()
 
-    allD1 = db[h1Rows, :discard];
-    allD1Cards = [unCanonicalize(d, sp1) for d in allD1];
-    allD2 = db[h2Rows, :discard];
-    allD2Cards = [unCanonicalize(d, sp2) for d in allD2];
+# @timeit to "setup+discard" begin
+
+    (h1, sp1) = canonicalize(h1Cards)
+    (h2, sp2) = canonicalize(h2Cards)
+
+    hi1 = handID[h1]
+    h1Rows = hi1[1]:hi1[2]
+    hi2 = handID[h2]
+    h2Rows = hi2[1]:hi2[2]
+
+    allD1 = @view db[h1Rows, :discard]
+    allD1Cards = [unCanonicalize(d, sp1) for d in allD1]
+    allD1Ranks = [stripsuits(D) for D in allD1]
+    allD2 = @view db[h2Rows, :discard]
+    allD2Cards = [unCanonicalize(d, sp2) for d in allD2]
+    allD2Ranks = [stripsuits(D) for D in allD2]
     
-    p1PlayHands = db[h1Rows, :playhand];
-    p2PlayHands = db[h2Rows, :playhand];
+    p1PlayHands = @view db[h1Rows, :playhand]
+    p2PlayHands = @view db[h2Rows, :playhand]
 
-    p1weights = ProbabilityWeights(db[h1Rows, :dealerprofile]);
-    p2weights = ProbabilityWeights(db[h2Rows, :poneprofile]);
-    di1 = sample(1:length(allD1), p1weights);
-    di2 = sample(1:length(allD2), p2weights);
+    # p1weights = ProbabilityWeights(db[h1Rows, :dealerprofile])
+    # p2weights = ProbabilityWeights(db[h2Rows, :poneprofile])
+    p1weights = ProbabilityWeights(view(db, h1Rows, :dealerprofile))
+    p2weights = ProbabilityWeights(view(db, h2Rows, :poneprofile))
+    di1 = sample(1:length(allD1), p1weights)
+    di2 = sample(1:length(allD2), p2weights)
 
-    p1playhand = p1PlayHands[di1];
-    p2playhand = p2PlayHands[di2];
+    p1playhand = p1PlayHands[di1]
+    d1h = allD1Ranks[di1]
+    p2playhand = p2PlayHands[di2]
+    d2h = allD2Ranks[di2]
 
-    p1PlayMargins = [resolveplay(p1h, p2playhand, phID, M) for p1h in p1PlayHands];
-    p2PlayMargins = [resolveplay(p1playhand, p2h, phID, M) for p2h in p2PlayHands];
+# end
 
+# @timeit to "play" begin
+
+    p1PlayMargins = [naiveplay([[p1playhand...], [p2h...]], [d1h, p2d], turnCard.rank)[1] for (p2h, p2d) in zip(p2PlayHands, allD2Ranks)]
+    p2PlayMargins = [naiveplay([[p1h...], [p2playhand...]], [p1d, d2h], turnCard.rank)[1] for (p1h, p1d) in zip(p1PlayHands, allD1Ranks)]
+
+# end
+
+# @timeit to "show" begin
     
-    p1ShowHands = [setdiff(h1Cards, d) for d in allD1Cards];
-    p2ShowHands = [setdiff(h2Cards, d) for d in allD2Cards];
+    p1ShowHands = [setdiff(h1Cards, d) for d in allD1Cards]
+    p2ShowHands = [setdiff(h2Cards, d) for d in allD2Cards]
 
-    p1Cribs = [makeCrib(d1, allD2Cards[di2]) for d1 in allD1Cards];
-    p2Cribs = [makeCrib(allD1Cards[di1], d2) for d2 in allD2Cards];
+    p1Cribs = [makeCrib(d1, allD2Cards[di2]) for d1 in allD1Cards]
+    p2Cribs = [makeCrib(allD1Cards[di1], d2) for d2 in allD2Cards]
 
-    p1ShowScores = [scoreShow(H, turnCard) for H in p1ShowHands];
-    p1CribScores = [scoreShow(C, turnCard, isCrib = true) for C in p1Cribs];
-    p2ShowScores = [scoreShow(H, turnCard) for H in p2ShowHands];
-    p2CribScores = [scoreShow(C, turnCard, isCrib = true) for C in p2Cribs];
-    p1ShowMargins = [ss - p2ShowScores[di2] for ss in p1ShowScores] .+ p1CribScores;     # actual scores: maximize this
-    p2ShowMargins = [p1ShowScores[di1] - ss for ss in p2ShowScores] .+ p2CribScores;     # actual scores: minimize this
+    p1ShowScores = [scoreShow(H, turnCard) for H in p1ShowHands]
+    p1CribScores = [scoreShow(C, turnCard, isCrib = true) for C in p1Cribs]
+    p2ShowScores = [scoreShow(H, turnCard) for H in p2ShowHands]
+    p2CribScores = [scoreShow(C, turnCard, isCrib = true) for C in p2Cribs]
+    p1ShowMargins = [ss - p2ShowScores[di2] for ss in p1ShowScores] .+ p1CribScores     # actual scores: maximize this
+    p2ShowMargins = [p1ShowScores[di1] - ss for ss in p2ShowScores] .+ p2CribScores     # actual scores: minimize this
 
-    p1Objectives = p1PlayMargins .+ p1ShowMargins;
-    p2Objectives = -p2PlayMargins .- p2ShowMargins;
-    p1Regrets = p1Objectives .- p1Objectives[di1];
-    p2Regrets = p2Objectives .- p2Objectives[di2];
+# end
+
+# @timeit to "updateDB" begin
+
+    p1Objectives = p1PlayMargins .+ p1ShowMargins
+    p2Objectives = -p2PlayMargins .- p2ShowMargins
+    p1Regrets = p1Objectives .- p1Objectives[di1]
+    p2Regrets = p2Objectives .- p2Objectives[di2]
 
     for drow in h1Rows
-        nrow = drow - hi1[1] + 1;
-        (nrow == di1) && (continue);
-        db.dealerregret[drow] = (db.dealerplaycount[drow] * db.dealerregret[drow] + p1Regrets[nrow]);
-        db.dealerplaycount[drow] += 1;
-        db.dealerregret[drow] /= db.dealerplaycount[drow];
+        nrow = drow - hi1[1] + 1
+        (nrow == di1) && (continue)
+        db.dealerregret[drow] = (db.dealerplaycount[drow] * db.dealerregret[drow] + p1Regrets[nrow])
+        db.dealerplaycount[drow] += 1
+        db.dealerregret[drow] /= db.dealerplaycount[drow]
     end
     for drow in h2Rows
-        nrow = drow - hi2[1] + 1;
-        (nrow == di2) && (continue);
-        db.poneregret[drow] = (db.poneplaycount[drow] * db.poneregret[drow] + p2Regrets[nrow]);
-        db.poneplaycount[drow] += 1;
-        db.poneregret[drow] /= db.poneplaycount[drow];
+        nrow = drow - hi2[1] + 1
+        (nrow == di2) && (continue)
+        db.poneregret[drow] = (db.poneplaycount[drow] * db.poneregret[drow] + p2Regrets[nrow])
+        db.poneplaycount[drow] += 1
+        db.poneregret[drow] /= db.poneplaycount[drow]
     end
-    db.dealerprofile[h1Rows] = max.(db.dealerregret[h1Rows], 0.0) ./ sum(max.(db.dealerregret[h1Rows], 0.0));
-    db.poneprofile[h2Rows] = max.(db.poneregret[h2Rows], 0.0) ./ sum(max.(db.poneregret[h2Rows], 0.0));
+    db.dealerprofile[h1Rows] = max.(db.dealerregret[h1Rows], 0.0) ./ sum(max.(db.dealerregret[h1Rows], 0.0))
+    db.poneprofile[h2Rows] = max.(db.poneregret[h2Rows], 0.0) ./ sum(max.(db.poneregret[h2Rows], 0.0))
+
+
+    ## Some optimization stuff
+
+    olddealerprobs = db.dealerplayprob[h1Rows]
+    oldponeprobs = db.poneplayprob[h2Rows]
+
+    db.dealerplayprob[h1Rows] = view(db, h1Rows, :dealerprofile) .* view(db, h1Rows, :prob)
+    db.poneplayprob[h2Rows] = view(db, h2Rows, :poneprofile) .* view(db, h2Rows, :prob)
+
+    for (ii, ph) in enumerate(p1PlayHands)
+        phDealerProbs[counter(ph)] += (db.dealerplayprob[ii] - olddealerprobs[ii])
+    end
+    for (ii, ph) in enumerate(p2PlayHands)
+        phPoneProbs[counter(ph)] += (db.poneplayprob[ii] - oldponeprobs[ii])
+    end
+
+# end
+
+
 
 
     # display(db[h1Rows, :])
@@ -245,5 +293,19 @@ function doCFR(db, hID, phID, M)
 
 end
 
+
+function testCFR()
+
+    # Random.seed!(12345)
+
+    X = dealHands()
+
+    doCFR(X...)
+
+end
+
+
+testCFR()
+# show(to)
 
 

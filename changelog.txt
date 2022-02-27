@@ -183,6 +183,25 @@ The question now is: should I still write a bayesian solver? Or is this good? I 
 
 Either way, I will deliver (myself) a minimal working product.
 
+I went ahead and messed with doCFR() a little. There's going to be some work to do there, but maybe not too much. Actually -- it looks like it works for seed!(12345). 
+**** But there's an issue with tree advancement for a random deal. :( :( ****
+
+Went ahead and benchmarked doCFR() on the known seed anyway, just to see. 205 ms, so 5 per s. The CFR overhead is real! Maybe the bayesian solver should be back-burnered for now. It's transparent to doCFR() anyway.
+
+
+
+2/27/22: Every great once in a while, testnaive() throws an advancestate!() error. It looks like it was from advancing the tree when it was redundant -- when all future nodes are guaranteed to have one or fewer candidates. I added checks around all the advancestate!() calls, and that seems to have fixed it.
+
+Next up: infrastructure / optimization around doCFR(). Time to think about how to actually run the solver, keep backups, etc.
+
+I had previously neglected to pull initial probabilities from the database in naivesolve(). I've fixed that now, and identified an inefficiency in the database in so doing (db.probability was stored as a vector of Any for some reason). Now dot() doesn't need to promote/convert. This is a huge slowdown and will need a lot of work. I need to learn a bit more about DataFrames too; switching everything I could in naiveplay and doCFR to views gave a 5x speedup. doCFR() sits at ~7s. I wonder if it would be faster to store the prob products right in db?
+UPDATE: using Profile.@profile, I'm seeing that the compiler is involved every time, even with the same random seed. I think I'm profiling wrong. The current doCFR(), involving the random deal and processing of the hands, should probably be testCFR().
+
+
+
+
+
+
 
 
 
@@ -190,10 +209,15 @@ Either way, I will deliver (myself) a minimal working product.
 ********************
 
 
+TODO: Rewrite doCFR() to take the deal as input. This should allow me to profile it better.
+
+
 TODO: Currently in optimalplay, advancestate(), and probably others, I am calling something like [ms.field for ms in model]. I think it would be faster to use a Tables.jl format, so I can access the model column-wise and just say model.field.
 STATUS: Low priority. naivesolve() is already pretty quick. If bayesiansolve() is on the edge of fast enough, it's worth looking at this optimization.
+UPDATE: When I put the probability stuff back into naiveplay(), it slowed down a lot. Bump that priority!
 
 
 
 TODO: Move db to smaller integers for storage purposes. Int8 works for all card ranks (in playhands and discards). Int32 is probably plenty for playcounts. Come to think of it, I probably don't actually need the playhand column at all.
+UPDATE: Having the playhand column simplifies the CFR logic a little, so I don't have to process all the discards
 
