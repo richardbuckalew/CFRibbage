@@ -197,6 +197,20 @@ function optimalplay(candidates::Vector{Int64}, model::Vector{ModelState}, whose
 end
 
 
+function getModels(seen::hType, hid::Int64, owner::Int64)
+
+    models = ModelState[]
+    for ph in allPH
+
+        any(values(merge(ph, seen)) .> 4) && continue
+        @assert sum(ph) == 4
+        (owner == 1) ? push!(models, ModelState(copy(ph), M[hid, phID[ph]], 1, 1.0)) : push!(models, ModelState(copy(ph), M[phID[ph], hid], 1, 1.0))
+
+    end
+    return models
+
+end
+
 function renormalize!(model::Vector{ModelState})
     s = sum([ms.prob for ms in model])
     for ms in model
@@ -217,17 +231,8 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
     played = [counter(Int64[]) for ii in (1, 2)]
     seen = [counter(vcat(hands[ii], discards[ii], [turnrank])) for ii in (1, 2)]
 
-    opphands = [getPotentialHands(counter(Int64[]), seen[ii], deepcopy(allPH)) for ii in (1, 2)]
-    trees = [[(ii == 1) ? (gettree(counter(hands[ii]), oh)) : (gettree(oh, counter(hands[ii]))) for oh in opphands[ii]] for ii in (1, 2)]
-    # probs = [ones(Float64, length(trees[ii])) ./ length(trees[ii]) for ii in (1, 2)]
+    models = [getModels(seen[ii], phID[counter(hands[ii])], ii) for ii in (1, 2)]
 
-    models = [Vector{ModelState}(), Vector{ModelState}()]
-    for n in 1:length(opphands[1])
-        push!(models[1], ModelState(counter(opphands[1][n]), trees[1][n], 1, 1.0))
-    end
-    for n in 1:length(opphands[2])
-        push!(models[2], ModelState(counter(opphands[2][n]), trees[2][n], 1, 1.0))
-    end
     setinitialprobs!(models[1], 2)
     setinitialprobs!(models[2], 1)
 
@@ -289,7 +294,8 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
             inc!(seen[3-whoseturn], c)
             inc!(played[whoseturn], c)
 
-            models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
+            # models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
+            filter!(ms->(ms.hand[c] > 0), models[3-whoseturn])
             renormalize!(models[3-whoseturn])
             for ms in models[3-whoseturn]
                 ci = getcandindex(ms.hand, c)
@@ -315,7 +321,8 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
             inc!(seen[3-whoseturn], c)
             inc!(played[whoseturn], c)
             
-            models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
+            # models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
+            filter!(ms->(ms.hand[c] > 0), models[3-whoseturn])
             renormalize!(models[3-whoseturn])
             for ms in models[3-whoseturn]
                 ci = getcandindex(ms.hand, c)
@@ -338,6 +345,147 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
 
 end
 
+function threadednaiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}, turnrank::Int64, dealerlock::ReentrantLock, ponelock::ReentrantLock)
+
+    whoseturn = 2
+    history = Int64[]
+    diffs = Int64[]
+    total = 0
+    scores = [0,0]
+    pairlength = 0
+    runlength = 0
+
+    played = [counter(Int64[]) for ii in (1, 2)]
+    seen = [counter(vcat(hands[ii], discards[ii], [turnrank])) for ii in (1, 2)]
+
+    models = [getModels(seen[ii], phID[counter(hands[ii])], ii) for ii in (1, 2)]
+
+    lock(dealerlock)
+    try
+        setinitialprobs!(models[1], 2)
+        # setinitialprobs!(models[2], 1)
+    finally
+        unlock(dealerlock)
+    end
+    lock(ponelock)
+    try
+        setinitialprobs!(models[2], 1)
+    finally
+        unlock(ponelock)
+    end
+
+
+    filter!(ms->(ms.prob > 0.0), models[1])
+    filter!(ms->(ms.prob > 0.0), models[2])
+    
+
+
+    while true
+
+        if all(isempty.(hands))
+            scores[3-whoseturn] += 1
+            break
+        end
+
+        # print("p", whoseturn, "'s turn with ", hands[whoseturn], ".\n  total: ", total, "\n  history: ", history, "\n  scores: ", scores, "\n")
+
+        candidates = Int64[]
+        handindex = Int64[]
+        for (hi, c) in enumerate(hands[whoseturn])
+            (cardvalues[c] + total > 31) && continue
+            (c in candidates) && continue
+            push!(candidates, c)
+            push!(handindex, hi)
+        end
+
+        if isempty(candidates)
+            if history[end] == 0
+                diffs = Int64[]
+                total = 0
+                pairlength = 0
+                runlength = 0
+            else
+                scores[3-whoseturn] += 1
+            end
+            push!(history, 0)
+
+            for r in 1:(31-total)
+                seen[3-whoseturn][r] = 4
+            end
+
+            models[3-whoseturn] = [ms for ms in models[3-whoseturn] if all([ms.hand[r] == 0 for r in 1:(31-total)])]
+            renormalize!(models[3-whoseturn])
+            advancestate!.(models[3-whoseturn], 1)
+            advancestate!.(models[whoseturn], 1)
+
+
+
+        elseif length(candidates) == 1
+            c = candidates[1]
+            total += cardvalues[c]
+            (length(history) > 0) ? (diffs = vcat(diffs, [c-history[end]])) : (diffs = Int64[])     
+            (s, pairlength, runlength) = scoreplay(c, history, diffs, total, pairlength, runlength) ## It is important that diffs has been updated but history has not ##
+            scores[whoseturn] += s
+            deleteat!(hands[whoseturn], handindex[1])
+            push!(history, c) 
+
+            inc!(seen[3-whoseturn], c)
+            inc!(played[whoseturn], c)
+
+            # models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
+            filter!(ms->(ms.hand[c] > 0), models[3-whoseturn])
+            renormalize!(models[3-whoseturn])
+            for ms in models[3-whoseturn]
+                ci = getcandindex(ms.hand, c)
+                if length(hands[3-whoseturn]) > 1
+                    advancestate!(ms, ci)
+                end
+                dec!(ms.hand, c)
+            end
+            if length(hands[whoseturn]) > 1
+                advancestate!.(models[whoseturn], 1)
+            end
+                                                                    
+
+        else
+            (cindex, c) = optimalplay(candidates, models[whoseturn], whoseturn)
+            total += cardvalues[c]
+            (length(history) > 0) ? (diffs = vcat(diffs, [c-history[end]])) : (diffs = Int64[])     
+            (s, pairlength, runlength) = scoreplay(c, history, diffs, total, pairlength, runlength) ## It is important that diffs has been updated but history has not ##
+            scores[whoseturn] += s
+            deleteat!(hands[whoseturn], handindex[cindex])
+            push!(history, c) 
+
+            inc!(seen[3-whoseturn], c)
+            inc!(played[whoseturn], c)
+            
+            # models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
+            filter!(ms->(ms.hand[c] > 0), models[3-whoseturn])
+            renormalize!(models[3-whoseturn])
+            for ms in models[3-whoseturn]
+                ci = getcandindex(ms.hand, c)
+                try
+                    if length(hands[3-whoseturn]) > 1
+                        advancestate!(ms, ci)
+                    end
+                catch
+                    @infiltrate
+                end
+                dec!(ms.hand, c)
+            end
+            advancestate!.(models[whoseturn], cindex)
+
+        end
+        whoseturn = 3 - whoseturn
+
+    end
+    return (scores[1] - scores[2], history)
+
+end
+
+
+
+
 function setinitialprobs!(model::Vector{ModelState}, player::Int64)
     for ms in model
         if player == 1
@@ -346,15 +494,6 @@ function setinitialprobs!(model::Vector{ModelState}, player::Int64)
             ms.prob = phPoneProbs[ms.hand]
         end
     end
-    # for ms in model
-    #     dbrows = @inbounds phRows[ms.hand]        
-    #     if player == 1
-    #         v = @view db.dealerplayprob[dbrows]
-    #     else
-    #         v = @view db.poneplayprob[dbrows]
-    #     end
-    #     ms.prob = sum(v)
-    # end
 end
 
 
@@ -400,10 +539,23 @@ function optimalplay(candidates::Vector{Int64}, possiblegamestates::Vector{FlatT
 end
 
 
-function getcandindex(h::hType, c::Int64)
-    return findfirst(unique(countertovector(h)) .== c)
-end
+# function getcandindex(h::hType, c::Int64)
+#     return findfirst(unique(countertovector(h)) .== c)
+# end
 
+
+function getcandindex(h::hType, c::Int64)::Int64
+    v = countertovector(h)
+    (v[1] == c) && (return 1)
+
+    cindex = 1
+    for (ii, vc) in enumerate(v[2:end])
+        (vc == v[ii]) && continue
+        cindex += 1
+        (vc == c) && (return cindex)
+    end
+
+end
 
 
 

@@ -173,18 +173,15 @@ end
 function makeCrib(d1, d2)
     return vcat(d1, d2)
 end
+
 function stripsuits(D::discardType)::Vector{Int64}
     return vcat([[x...] for x in D]...);
 end
 
 
-function doCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turnCard::Card)
+function doCFR()
 
-    # Random.seed!(12345)
-
-    # (h1Cards, h2Cards, turnCard) = dealHands()
-
-# @timeit to "setup+discard" begin
+    (h1Cards, h2Cards, turnCard) = dealHands()
 
     (h1, sp1) = canonicalize(h1Cards)
     (h2, sp2) = canonicalize(h2Cards)
@@ -204,8 +201,6 @@ function doCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turnCard::Card)
     p1PlayHands = @view db[h1Rows, :playhand]
     p2PlayHands = @view db[h2Rows, :playhand]
 
-    # p1weights = ProbabilityWeights(db[h1Rows, :dealerprofile])
-    # p2weights = ProbabilityWeights(db[h2Rows, :poneprofile])
     p1weights = ProbabilityWeights(view(db, h1Rows, :dealerprofile))
     p2weights = ProbabilityWeights(view(db, h2Rows, :poneprofile))
     di1 = sample(1:length(allD1), p1weights)
@@ -216,17 +211,9 @@ function doCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turnCard::Card)
     p2playhand = p2PlayHands[di2]
     d2h = allD2Ranks[di2]
 
-# end
-
-# @timeit to "play" begin
-
     p1PlayMargins = [naiveplay([[p1playhand...], [p2h...]], [d1h, p2d], turnCard.rank)[1] for (p2h, p2d) in zip(p2PlayHands, allD2Ranks)]
     p2PlayMargins = [naiveplay([[p1h...], [p2playhand...]], [p1d, d2h], turnCard.rank)[1] for (p1h, p1d) in zip(p1PlayHands, allD1Ranks)]
 
-# end
-
-# @timeit to "show" begin
-    
     p1ShowHands = [setdiff(h1Cards, d) for d in allD1Cards]
     p2ShowHands = [setdiff(h2Cards, d) for d in allD2Cards]
 
@@ -239,10 +226,6 @@ function doCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turnCard::Card)
     p2CribScores = [scoreShow(C, turnCard, isCrib = true) for C in p2Cribs]
     p1ShowMargins = [ss - p2ShowScores[di2] for ss in p1ShowScores] .+ p1CribScores     # actual scores: maximize this
     p2ShowMargins = [p1ShowScores[di1] - ss for ss in p2ShowScores] .+ p2CribScores     # actual scores: minimize this
-
-# end
-
-# @timeit to "updateDB" begin
 
     p1Objectives = p1PlayMargins .+ p1ShowMargins
     p2Objectives = -p2PlayMargins .- p2ShowMargins
@@ -266,9 +249,6 @@ function doCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turnCard::Card)
     db.dealerprofile[h1Rows] = max.(db.dealerregret[h1Rows], 0.0) ./ sum(max.(db.dealerregret[h1Rows], 0.0))
     db.poneprofile[h2Rows] = max.(db.poneregret[h2Rows], 0.0) ./ sum(max.(db.poneregret[h2Rows], 0.0))
 
-
-    ## Some optimization stuff
-
     olddealerprobs = db.dealerplayprob[h1Rows]
     oldponeprobs = db.poneplayprob[h2Rows]
 
@@ -282,30 +262,139 @@ function doCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turnCard::Card)
         phPoneProbs[counter(ph)] += (db.poneplayprob[ii] - oldponeprobs[ii])
     end
 
-# end
 
 
-
-
-    # display(db[h1Rows, :])
-    # display(db[h2Rows, :])
 
 
 end
 
+function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Card, 
+                    dblock::ReentrantLock, dealerlock::ReentrantLock, ponelock::ReentrantLock)
 
-function testCFR()
+    (h1, sp1) = canonicalize(h1Cards)
+    (h2, sp2) = canonicalize(h2Cards)
 
-    # Random.seed!(12345)
+    hi1 = handID[h1]
+    h1rows = hi1[1]:hi1[2]
+    n1 = hi1[2] - hi1[1] + 1
+    hi2 = handID[h2]
+    h2rows = hi2[1]:hi2[2]
+    n2 = hi2[2] - hi2[1] + 1
 
-    X = dealHands()
 
-    doCFR(X...)
+
+    df1 = nothing
+    df2 = nothing 
+    lock(dblock)
+    try
+        df1 = db[h1rows, :]         # not @view because db may be updated in the background. This is a slowdown of ~150μs per deal
+        df2 = db[h2rows, :]
+    finally
+        unlock(dblock)
+    end
+
+
+
+    d1cards = [unCanonicalize(d, sp1) for d in @view df1[:, :discard]]
+    d2cards = [unCanonicalize(d, sp2) for d in @view df2[:, :discard]]
+
+    d1ranks = [stripsuits(d) for d in @view df1[:, :discard]]
+    d2ranks = [stripsuits(d) for d in @view df2[:, :discard]]
+
+    p1playhands = @view df1[:, :playhand]
+    p2playhands = @view df2[:, :playhand]
+
+    p1weights = ProbabilityWeights(@view df1[:, :dealerprofile])
+    p2weights = ProbabilityWeights(@view df2[:, :poneprofile])
+
+    di1 = sample(1:n1, p1weights)
+    di2 = sample(1:n2, p2weights)
+
+
+    p1playmargins = [threadednaiveplay([[p1h...], [p2playhands[di2]...]], [p1d, d2ranks[di2]], turncard.rank, dealerlock, ponelock)[1] for (p1h, p1d) in zip(p1playhands, d1ranks)]
+    p2playmargins = [threadednaiveplay([[p1playhands[di1]...], [p2h...]], [d1ranks[di1], p2d], turncard.rank, dealerlock, ponelock)[1] for (p2h, p2d) in zip(p2playhands, d2ranks)]
+
+
+    p1showhands = [setdiff(h1Cards, d) for d in d1cards]
+    p2showhands = [setdiff(h2Cards, d) for d in d2cards]
+
+    p1cribs = [vcat(d1, d2cards[di2]) for d1 in d1cards]
+    p2cribs = [vcat(d1cards[di1], d2) for d2 in d2cards]
+
+    p1showscores = [scoreShow(H, turncard) for H in p1showhands]
+    p2showscores = [scoreShow(H, turncard) for H in p2showhands]
+
+    p1cribscores = [scoreShow(C, turncard, isCrib = true) for C in p1cribs]
+    p2cribscores = [scoreShow(C, turncard, isCrib = true) for C in p2cribs]
+
+    p1showmargins = [ss - p2showscores[di2] for ss in p1showscores] .+ p1cribscores
+    p2showmargins = [p1showscores[di1] - ss for ss in p2showscores] .+ p2cribscores
+
+    p1objectives = zeros(Int64, n1)
+    p2objectives = zeros(Int64, n2)
+    try
+        p1objectives = p1playmargins .+ p1showmargins
+        p2objectives = -p2playmargins .- p2showmargins
+    catch
+        @infiltrate()
+    end
+
+    p1regrets = p1objectives .- p1objectives[di1]
+    p2regrets = p2objectives .- p2objectives[di2]
+
+
+    olddealerprobs = nothing
+    oldponeprobs = nothing
+    newdealerprobs = nothing
+    newponeprobs = nothing
+    lock(dblock)
+    try
+        for (nrow, drow) in enumerate(h1rows)
+            (nrow == di1) && continue
+            db.dealerregret[drow] = (db.dealerplaycount[drow] * db.dealerregret[drow] + p1regrets[nrow])
+            db.dealerplaycount[drow] += 1
+            db.dealerregret[drow] /= db.dealerplaycount[drow]
+        end
+        for (nrow, drow) in enumerate(h2rows)
+            (nrow == di2) && (continue)
+            db.poneregret[drow] = (db.poneplaycount[drow] * db.poneregret[drow] + p2regrets[nrow])
+            db.poneplaycount[drow] += 1
+            db.poneregret[drow] /= db.poneplaycount[drow]
+        end
+        db.dealerprofile[h1rows] = max.(db.dealerregret[h1rows], 0.0) ./ sum(max.(db.dealerregret[h1rows], 0.0))
+        db.poneprofile[h2rows] = max.(db.poneregret[h2rows], 0.0) ./ sum(max.(db.poneregret[h2rows], 0.0))
+
+        olddealerprobs = db.dealerplayprob[h1rows]
+        oldponeprobs = db.poneplayprob[h2rows]
+
+        db.dealerplayprob[h1rows] = view(db, h1rows, :dealerprofile) .* view(db, h1rows, :prob)
+        db.poneplayprob[h2rows] = view(db, h2rows, :poneprofile) .* view(db, h2rows, :prob)
+
+        newdealerprobs = db.dealerplayprob[h1rows]
+        newponeprobs = db.poneplayprob[h2rows]
+    finally
+        unlock(dblock)
+    end
+
+    lock(dealerlock)
+    try
+        for (ii, ph) in enumerate(p1playhands)
+            phDealerProbs[counter(ph)] += (newdealerprobs[ii] - olddealerprobs[ii])
+        end
+    finally
+        unlock(dealerlock)
+    end
+
+    lock(ponelock)
+    try
+        for (ii, ph) in enumerate(p2playhands)
+            phPoneProbs[counter(ph)] += (newponeprobs[ii] - oldponeprobs[ii])
+        end
+    finally
+        unlock(ponelock)
+    end
+
+
 
 end
-
-
-testCFR()
-# show(to)
-
 

@@ -197,9 +197,37 @@ Next up: infrastructure / optimization around doCFR(). Time to think about how t
 I had previously neglected to pull initial probabilities from the database in naivesolve(). I've fixed that now, and identified an inefficiency in the database in so doing (db.probability was stored as a vector of Any for some reason). Now dot() doesn't need to promote/convert. This is a huge slowdown and will need a lot of work. I need to learn a bit more about DataFrames too; switching everything I could in naiveplay and doCFR to views gave a 5x speedup. doCFR() sits at ~7s. I wonder if it would be faster to store the prob products right in db?
 UPDATE: using Profile.@profile, I'm seeing that the compiler is involved every time, even with the same random seed. I think I'm profiling wrong. The current doCFR(), involving the random deal and processing of the hands, should probably be testCFR().
 
+Afternoon: storing the play probabilities in db gives another 2x speedup, to about 3.5s. On 6 cores, that's around 2 deals / s. 6 days to reach 1,000,000 deals at that rate. My goal is something like 100,000,000 deals min, so that would be 2 years of computation. Keep working!
+IDEA: if we have zeros in poneplayprob, we can ignore that model state!! Added to naiveplay. It won't pay off until much later, but I'll be glad i did it.
+
+so testnaive() clocks in at 120ms. One round of CFR involves ~30 plays. There's a little overhead from doCFR() itself but every ms I shave off of testnaive() translates to 30ms in doCFR(). setinitialprobs!() is by far the slowest step.
+
+By precalculating the probability of each play hand in a separate dict (phDealerProbs or phPoneProbs), I have gotten about a 20x speedup. doCFR() takes about 0.25s now. Across 6 cores, that's 24/s. We're down to two months of calculation to hit 100,000,000 deals. This time, for real: Next up, infrastructure! What's needed:
+  - multiprocessing. Learn about locks!
+  - logging.
+  - periodic backups.
+  - analysis tools.
+The first three are higher priority than the last, since I can write those while CFRibbage thinks in the background.
 
 
 
+3/3/22: No time this week to work :( Today I added multithreading. I'm using ReentrantLock() and I'm being pretty liberal with it. I have one for each struct that I write to. The big ones are obviously going to be db and M; I'm only using about half my processing power right now (6 threads should reach 50% utilization, i'm down around 20%). Both of these structures are huge, and I'm only working on a small part of db at any one time. M is a little different; I'm usually generating tens of thousands of trees at a time -- but then, eventually I won't be generating any at all. 
+SOLUTION 1: pre-fill M. It's time??? Then I don't have to worry about locks on it.
+SOLUTION 2: Make a custom lock, using Threads.Condition: only lock if another thread is currently using the same rows as you. Or (maybe?) even easier, just do the deals ahead of time, and make sure no two threads have the same hand at any time. Maybe @spawn is the right move here, instead of @threads.
+At any rate, it works. But the performance is not there yet. After resetting db, multiCFR() is taking ~90s to do 100 deals -- that's not much better than single thread (107s). But this is an astonishing amount of GC time... 87%. Not sure why. I'm getting rid of the locks for now, and will prefill M. M's going to fill up at some point anyway. May as well do it now and get rid of what I'm guessing is the limiting lock. So for now I'm filling M and I'll come back to this later (probably this weekend).
+UPDATE: M filled and it takes 4.5 min to serialize. That's not bad. It's 13GB on disk, which is pretty close to how big it is in memory, too!
+UPDATE: holy shit, doCFR() is showing 92% gc time now (at 3.2s, so actual time still 0.25s if I can fix the gc issue). This is my first regression, didn't revert the locking code correctly I guess. naiveplay() is still fast, no GC to speak of.
+
+
+
+3/4/22: Reversion mostly fixed the problem. I don't know what the problem *was* exactly, but it's mostly fixed. Now doCFR() shows 25% GC time (out of 0.4s, so there's room for improvement). @btime puts it at 0.33s. "The Internet" suggests that GC times don't necessarily correspond to actually collection, but rather with heap size as the GC traverses the heap *looking* for garbage. It seems possible that I've inadvertently increased the size of the heap? With M filled, I should be able to avoid data races by distributing the threads carefully. 
+TIMING: loading the full M takes 870s ~ 14.5 min. Could be worse. Could probably be better with more cores too. My compactification was very effective; with everything loaded (and chrome etc. still running) I'm sitting at 21GB RAM in use. Julia reports needing 14.5GB. That's very good!! It feels great to remove the Random.seed!() call at the beginning of my test functions too.
+
+Some optimization this morning; cut the # of allocations significantly. Down to 0.25s per doCFR(). Gotta switch modes and prep for class now, back to it this weekend with the intelligent threading implementation.
+
+OK, I couldn't stop working on it in the shower! I've eliminated the calls to deepcopy(), the last major speedbump. doCFR() now takes about 0.16s. But there's a rare bug where the number of play hands isn't matching the number of show hands in doCFR(). That's a weird one! UPDATE: solved. swapped dealer and pone in one key line of doCFR().
+
+Afternoon: returned to the multithreading, but did it correctly this time with threadedCFR() and threadednaiveplay(). Using @threads, I'm getting full CPU utilization. (!!!) @btime on testthread, which uses @threads to run 100 deals, gives 5.1s. That's 20 / s (on 6 cores). 4 weeks of training ==> 40,000,000 deals. IOW, 10,000,000 deals per week, more than 1,000,000 deals per day.
 
 
 
@@ -209,15 +237,10 @@ UPDATE: using Profile.@profile, I'm seeing that the compiler is involved every t
 ********************
 
 
-TODO: Rewrite doCFR() to take the deal as input. This should allow me to profile it better.
+IMPORTANT: WHEN I IMPLEMENT THE STATE SAVING, MAKE SURE I SAVE phDealerProbs and phPoneProbs along with db and M!!
 
+TODO: Test the phDealerProbs and phPoneProbs update steps in doCFR  (lines 266-271) to make sure they do what I think they do.
 
 TODO: Currently in optimalplay, advancestate(), and probably others, I am calling something like [ms.field for ms in model]. I think it would be faster to use a Tables.jl format, so I can access the model column-wise and just say model.field.
 STATUS: Low priority. naivesolve() is already pretty quick. If bayesiansolve() is on the edge of fast enough, it's worth looking at this optimization.
 UPDATE: When I put the probability stuff back into naiveplay(), it slowed down a lot. Bump that priority!
-
-
-
-TODO: Move db to smaller integers for storage purposes. Int8 works for all card ranks (in playhands and discards). Int32 is probably plenty for playcounts. Come to think of it, I probably don't actually need the playhand column at all.
-UPDATE: Having the playhand column simplifies the CFR logic a little, so I don't have to process all the discards
-

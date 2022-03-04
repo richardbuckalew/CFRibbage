@@ -238,25 +238,32 @@ function unpackflat(::Nothing)
 end
 
 
-
-
 function gettree(h1::hType, h2::hType)
-    i1 = phID[h1]
-    i2 = phID[h2]
-    if !isnothing(M[i1, i2])
-        return M[i1, i2]
-    end
-    ps = PlayState(2, [countertovector(h1), countertovector(h2)], Int64[], Int64[], 0, 0, 0, [0,0], PlayState[], 0, 0)
-    solve!(ps)
-    mn = MinimalNode((), ())
-    minimize!(ps, mn)
-    ft =makeflat(mn)
-    M[i1, i2] = ft
-    return ft
+    return M[phID[h1], phID[h2]]
 end
+
+
+
+
+
+# function gettree(h1::hType, h2::hType)
+#     i1 = phID[h1]
+#     i2 = phID[h2]
+#     if !isnothing(M[i1, i2])
+#         return M[i1, i2]
+#     end
+#     ps = PlayState(2, [countertovector(h1), countertovector(h2)], Int64[], Int64[], 0, 0, 0, [0,0], PlayState[], 0, 0)
+#     solve!(ps)
+#     mn = MinimalNode((), ())
+#     minimize!(ps, mn)
+#     ft =makeflat(mn)
+#     M[i1, i2] = ft
+#     return ft
+# end
 
 function saveM()
     serialize("M.jls", tmap(packflat, M))
+    GC.gc()
 end
 
 function loadM()
@@ -266,5 +273,19 @@ end
 function Msize()
     return length([m for m in M if !isnothing(m)])
 end
+
+
+function saveprogress()
+    serialize("db.jls", db)
+    serialize("phDealerProbs.jls", phDealerProbs)
+    serialize("phPoneProbs.jls", phPoneProbs)
+end
+
+function loadprogress()
+    global db = deserialize("db.jls")
+    global phDealerProbs = deserialize("phDealerProbs.jls")
+    global phPoneProbs = deserialize("phPoneProbs.jls")
+end
+
 
 
