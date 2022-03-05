@@ -1,5 +1,5 @@
 using Combinatorics, Serialization, IterTools, ProgressMeter, StatsBase, ProfileView, BenchmarkTools
-using DataStructures, Random, DataFrames, ThreadTools, Infiltrator, LinearAlgebra, TimerOutputs
+using DataStructures, Random, DataFrames, ThreadTools, Infiltrator, LinearAlgebra, TimerOutputs, Logging
 
 
 # (@isdefined to) || (const to = TimerOutput())
@@ -86,7 +86,8 @@ include("dbUtils.jl");
 (@isdefined phID) || (@time const phID = deserialize("phID.jls"))        # Counter => Int64
 (@isdefined phRows) || (@time const phRows = deserialize("phRows.jls"))  # Counter => Vector{Int64}
 (@isdefined M) || (@time global M = loadM())
-
+(@isdefined results) || (@time global results = deserialize("results.jls"))
+(@isdefined nresults) || (global nresults = length(results))
 
 
 
@@ -310,10 +311,11 @@ function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Car
     di1 = sample(1:n1, p1weights)
     di2 = sample(1:n2, p2weights)
 
+    p1playresults = [threadednaiveplay([[p1h...], [p2playhands[di2]...]], [p1d, d2ranks[di2]], turncard.rank, dealerlock, ponelock) for (p1h, p1d) in zip(p1playhands, d1ranks)]
+    p2playresults = [threadednaiveplay([[p1playhands[di1]...], [p2h...]], [d1ranks[di1], p2d], turncard.rank, dealerlock, ponelock) for (p2h, p2d) in zip(p2playhands, d2ranks)]
 
-    p1playmargins = [threadednaiveplay([[p1h...], [p2playhands[di2]...]], [p1d, d2ranks[di2]], turncard.rank, dealerlock, ponelock)[1] for (p1h, p1d) in zip(p1playhands, d1ranks)]
-    p2playmargins = [threadednaiveplay([[p1playhands[di1]...], [p2h...]], [d1ranks[di1], p2d], turncard.rank, dealerlock, ponelock)[1] for (p2h, p2d) in zip(p2playhands, d2ranks)]
-
+    p1playmargins = [result[1] for result in p1playresults]
+    p2playmargins = [result[1] for result in p2playresults]
 
     p1showhands = [setdiff(h1Cards, d) for d in d1cards]
     p2showhands = [setdiff(h2Cards, d) for d in d2cards]
@@ -332,12 +334,8 @@ function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Car
 
     p1objectives = zeros(Int64, n1)
     p2objectives = zeros(Int64, n2)
-    try
-        p1objectives = p1playmargins .+ p1showmargins
-        p2objectives = -p2playmargins .- p2showmargins
-    catch
-        @infiltrate()
-    end
+    p1objectives = p1playmargins .+ p1showmargins
+    p2objectives = -p2playmargins .- p2showmargins
 
     p1regrets = p1objectives .- p1objectives[di1]
     p2regrets = p2objectives .- p2objectives[di2]
@@ -394,7 +392,43 @@ function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Car
         unlock(ponelock)
     end
 
-
+    return (d1cards[di1], d2cards[di2], p1playresults[di1][2][1], p2playresults[di2][2][2], p1showscores[di1], p2showscores[di2])
 
 end
+
+
+function oneDeal(dblock::ReentrantLock, dealerlock::ReentrantLock, ponelock::ReentrantLock, resultlock::ReentrantLock)
+
+    (h1cards, h2cards, turncard) = dealHands()
+    (d1cards, d2cards, p1playscore, p2playscore, p1showscore, p2showscore) = threadedCFR(h1cards, h2cards, turncard, dblock, dealerlock, ponelock)
+    logresult(h1cards, h2cards, turncard, d1cards, d2cards, [p1playscore, p2playscore], [p1showscore, p2showscore], resultlock)
+
+end
+
+
+
+function dobatch(ndeals = 1000)
+
+    dblock = ReentrantLock()
+    dealerlock = ReentrantLock()
+    ponelock = ReentrantLock()
+    resultlock = ReentrantLock()
+
+    Threads.@threads for ii in 1:ndeals
+
+        oneDeal(dblock, dealerlock, ponelock, resultlock)
+
+    end
+
+    saveprogress()
+
+end
+
+
+
+
+
+
+
+
 

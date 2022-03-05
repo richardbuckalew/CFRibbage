@@ -231,6 +231,8 @@ Afternoon: returned to the multithreading, but did it correctly this time with t
 
 
 
+3/5/22: Multithreading + simple logging is working. At 50% cpu, I can run about 16 hands per second, which translates to around 1,000,000 per day. Saving results as a vector of OrderedDicts in results.jls. Each day I will manually back up the results logs to keep them from getting unwieldy. This is exciting!
+
 
 
 ******* TODO *******

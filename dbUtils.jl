@@ -279,13 +279,35 @@ function saveprogress()
     serialize("db.jls", db)
     serialize("phDealerProbs.jls", phDealerProbs)
     serialize("phPoneProbs.jls", phPoneProbs)
+    serialize("results.jls", results)
 end
 
 function loadprogress()
     global db = deserialize("db.jls")
     global phDealerProbs = deserialize("phDealerProbs.jls")
     global phPoneProbs = deserialize("phPoneProbs.jls")
+    global results = deserialize("results.jls")
 end
 
+
+
+function logresult(h1cards::Vector{Card}, h2cards::Vector{Card}, turncard::Card,
+                    d1cards::Vector{Card}, d2cards::Vector{Card}, playscores::Vector{Int64}, showscores::Vector{Int64},
+                    resultlock::ReentrantLock)
+    
+    lock(resultlock)
+    try
+        push!(results,
+                OrderedDict(
+                    "ndeal" => nresults+1, "h1" => h1cards, "h2" => h2cards, "turn" => turncard, 
+                    "d1" => d1cards, "d2" => d2cards, "play" => playscores, "show" => showscores
+                )
+            )
+        global nresults += 1
+    finally
+        unlock(resultlock)
+    end
+
+end
 
 

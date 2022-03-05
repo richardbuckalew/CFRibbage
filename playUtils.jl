@@ -203,7 +203,6 @@ function getModels(seen::hType, hid::Int64, owner::Int64)
     for ph in allPH
 
         any(values(merge(ph, seen)) .> 4) && continue
-        @assert sum(ph) == 4
         (owner == 1) ? push!(models, ModelState(copy(ph), M[hid, phID[ph]], 1, 1.0)) : push!(models, ModelState(copy(ph), M[phID[ph], hid], 1, 1.0))
 
     end
@@ -341,7 +340,7 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
         whoseturn = 3 - whoseturn
 
     end
-    return (scores[1] - scores[2], history)
+    return (scores[1] - scores[2], scores, history)
 
 end
 
@@ -479,7 +478,7 @@ function threadednaiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector
         whoseturn = 3 - whoseturn
 
     end
-    return (scores[1] - scores[2], history)
+    return (scores[1] - scores[2], scores, history)
 
 end
 
