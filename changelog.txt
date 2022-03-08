@@ -234,15 +234,22 @@ Afternoon: returned to the multithreading, but did it correctly this time with t
 3/5/22: Multithreading + simple logging is working. At 50% cpu, I can run about 16 hands per second, which translates to around 1,000,000 per day. Saving results as a vector of OrderedDicts in results.jls. Each day I will manually back up the results logs to keep them from getting unwieldy. This is exciting!
 
 
+3/6/22: I have been training for a while now. I've got 300k good deals in, and everything looks like it's working correctly -- *sort of*. Occasionally julia crashes with a memory access error (code 0xc0000005). I tried a couple things to maybe fix that, like doing more, smaller batches, and so far I haven't seen another crash. But I *am* seeing that batches take longer over time. The only structure that should be growing is results, and it only grows by 10,000 dicts each batch -- meanwhile the batch time increases by 10s per. It's possible this is only due to the growth of results. I think I will consider pre-allocating in the future. In the meantime, training continues.
+
+
+
+3/7/22: Training continues. The weird crashes have disappeared but the slowdown is still happening. I hit the first million deals, which I saved as results_1.jls in the results archive folder. Some ideas I have for the future:
+ - parse results as json for storage / analysis
+ - preallocate all the play solve data structures in dobatch, and reuse them across all the plays within a given thread. This should (?) reduce GC.
+
+
+
 
 ******* TODO *******
 ********************
 
 
-IMPORTANT: WHEN I IMPLEMENT THE STATE SAVING, MAKE SURE I SAVE phDealerProbs and phPoneProbs along with db and M!!
-
-TODO: Test the phDealerProbs and phPoneProbs update steps in doCFR  (lines 266-271) to make sure they do what I think they do.
-
 TODO: Currently in optimalplay, advancestate(), and probably others, I am calling something like [ms.field for ms in model]. I think it would be faster to use a Tables.jl format, so I can access the model column-wise and just say model.field.
 STATUS: Low priority. naivesolve() is already pretty quick. If bayesiansolve() is on the edge of fast enough, it's worth looking at this optimization.
 UPDATE: When I put the probability stuff back into naiveplay(), it slowed down a lot. Bump that priority!
+UPDATE: There is a package called StructArrays.jl that may be a nice halfway fix for this, instead of going full Tables.jl.
