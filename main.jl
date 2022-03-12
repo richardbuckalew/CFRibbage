@@ -311,8 +311,10 @@ function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Car
     di1 = sample(1:n1, p1weights)
     di2 = sample(1:n2, p2weights)
 
-    p1playresults = [threadednaiveplay([[p1h...], [p2playhands[di2]...]], [p1d, d2ranks[di2]], turncard.rank, dealerlock, ponelock) for (p1h, p1d) in zip(p1playhands, d1ranks)]
-    p2playresults = [threadednaiveplay([[p1playhands[di1]...], [p2h...]], [d1ranks[di1], p2d], turncard.rank, dealerlock, ponelock) for (p2h, p2d) in zip(p2playhands, d2ranks)]
+    models = [Vector{ModelState}(undef, 1820), Vector{ModelState}(undef, 1820)]
+
+    p1playresults = [naiveplay_threaded([[p1h...], [p2playhands[di2]...]], [p1d, d2ranks[di2]], turncard.rank, dealerlock, ponelock) for (p1h, p1d) in zip(p1playhands, d1ranks)]
+    p2playresults = [naiveplay_threaded([[p1playhands[di1]...], [p2h...]], [d1ranks[di1], p2d], turncard.rank, dealerlock, ponelock) for (p2h, p2d) in zip(p2playhands, d2ranks)]
 
     p1playmargins = [result[1] for result in p1playresults]
     p2playmargins = [result[1] for result in p2playresults]
@@ -382,7 +384,6 @@ function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Car
     finally
         unlock(dealerlock)
     end
-
     lock(ponelock)
     try
         for (ii, ph) in enumerate(p2playhands)
@@ -391,6 +392,7 @@ function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Car
     finally
         unlock(ponelock)
     end
+
 
     return (d1cards[di1], d2cards[di2], p1playresults[di1][2][1], p2playresults[di2][2][2], p1showscores[di1], p2showscores[di2])
 
@@ -407,12 +409,13 @@ end
 
 
 
-function dobatch(ndeals = 1000)
+function dobatch(ndeals = 10000)
 
     dblock = ReentrantLock()
     dealerlock = ReentrantLock()
     ponelock = ReentrantLock()
     resultlock = ReentrantLock()
+
 
     Threads.@threads for ii in 1:ndeals
 
@@ -420,13 +423,16 @@ function dobatch(ndeals = 1000)
 
     end
 
-    saveprogress()
+
+    # saveprogress()
 
 end
 
-
-
-
+for ii in 1:10
+    print(ii, " ")
+    @time dobatch(10000)
+end
+# saveprogress()
 
 
 

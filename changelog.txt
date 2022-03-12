@@ -243,6 +243,10 @@ Afternoon: returned to the multithreading, but did it correctly this time with t
  - preallocate all the play solve data structures in dobatch, and reuse them across all the plays within a given thread. This should (?) reduce GC.
 
 
+ 3/11/22: Spring Break! Woo! Time to finally do the things I've been thinking about all week.
+ First: Just finished moving to the bitvector version of naiveplay(). threadedCFR() is now 90ms per deal. BIG WHOOP!!
+
+
 
 
 ******* TODO *******

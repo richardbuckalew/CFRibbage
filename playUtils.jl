@@ -140,7 +140,14 @@ struct FlatTree
 end
 Base.length(ft::FlatTree) = length(ft.values)
 Base.getindex(ft::FlatTree, i::Int64) = (ft.values[i], ft.links[i])
-Base.show(io::IO, ft::FlatTree) = print(io, "Flat Tree (", length(ft), " nodes) with v = ", ft.values[1], " and l = ", ft.links[1])
+function Base.show(io::IO, ft::FlatTree)
+    if length(ft.values) > 0
+        print(io, "FlatTree (", length(ft), " nodes) with v = ", ft.values[1], " and l = ", ft.links[1])
+    else
+        print(io, "FlatTree (empty)")
+    end
+end
+
 function advancetree(ft::FlatTree, cindex::Int64)
     return FlatTree(
         Tuple(ft.values[ft[1][2][cindex]:end]),
@@ -175,7 +182,6 @@ end
 
 
 
-
 mutable struct ModelState       ## later optimization: Store columnwise so it's easy to access model.probs etc.
     hand::hType
     tree::FlatTree
@@ -186,10 +192,10 @@ function advancestate!(ms::ModelState, cindex::Int64)
     ms.ptr += ms.tree.links[ms.ptr][cindex]
 end
 
+
 function optimalplay(candidates::Vector{Int64}, model::Vector{ModelState}, whoseturn::Int64)
     EVs = zeros(Float64, length(candidates));
     for ii in 1:length(candidates)
-        # EVs[ii] = sum([ms.tree.values[ms.ptr][ii] for ms in model] .* [ms.prob for ms in model])
         EVs[ii] = dot([ms.tree.values[ms.ptr][ii] for ms in model], [ms.prob for ms in model])
     end
     (whoseturn == 1) ? ((m, mi) = findmax(EVs)) : ((m, mi) = findmin(EVs));
@@ -344,7 +350,12 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
 
 end
 
-function threadednaiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}, turnrank::Int64, dealerlock::ReentrantLock, ponelock::ReentrantLock)
+function naiveplay_threaded(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}, turnrank::Int64, dealerlock::ReentrantLock, ponelock::ReentrantLock)
+
+    h1 = counter(hands[1])
+    hid1 = phID[h1]
+    h2 = counter(hands[2])
+    hid2 = phID[h2]
 
     whoseturn = 2
     history = Int64[]
@@ -357,26 +368,38 @@ function threadednaiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector
     played = [counter(Int64[]) for ii in (1, 2)]
     seen = [counter(vcat(hands[ii], discards[ii], [turnrank])) for ii in (1, 2)]
 
-    models = [getModels(seen[ii], phID[counter(hands[ii])], ii) for ii in (1, 2)]
-
-    lock(dealerlock)
-    try
-        setinitialprobs!(models[1], 2)
-        # setinitialprobs!(models[2], 1)
-    finally
-        unlock(dealerlock)
-    end
+    models = [ModelState[], ModelState[]]
     lock(ponelock)
     try
-        setinitialprobs!(models[2], 1)
+        models[1] = [isnothing(M[hid1, phID[ph]]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[hid1, phID[ph]], 1, phPoneProbs[ph]) for ph in allPH]
     finally
         unlock(ponelock)
     end
 
+    lock(dealerlock)
+    try
+        models[2] = [isnothing(M[phID[ph], hid2]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[phID[ph], hid2], 1, phDealerProbs[ph]) for ph in allPH]
+    finally
+        unlock(dealerlock)
+    end
 
-    filter!(ms->(ms.prob > 0.0), models[1])
-    filter!(ms->(ms.prob > 0.0), models[2])
-    
+
+    # lock(problock)
+    # try
+    #     models = [  [isnothing(M[hid1, phID[ph]]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[hid1, phID[ph]], 1, phPoneProbs[ph]) for ph in allPH], 
+    #                 [isnothing(M[phID[ph], hid2]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[phID[ph], hid2], 1, phDealerProbs[ph]) for ph in allPH]
+    #              ]
+    # finally
+    #     unlock(problock)
+    # end
+
+    modelbvs = [hmask_exclude(seen[ii]) for ii in (1, 2)]
+
+    # nzprobs = [(x -> x .> 0).([ms.prob for ms in models[ii]]) for ii in (1, 2)]
+    # for ii in (1, 2)
+    #     modelbvs[ii] .&= nzprobs[ii]
+    # end
+
 
 
     while true
@@ -386,7 +409,15 @@ function threadednaiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector
             break
         end
 
-        # print("p", whoseturn, "'s turn with ", hands[whoseturn], ".\n  total: ", total, "\n  history: ", history, "\n  scores: ", scores, "\n")
+        # print("p", whoseturn, "'s turn with ", hands[whoseturn], ".\n  total: ", total, "\n  history: ", history, "\n  scores: ", scores, "\n\n")
+        # print("  my models:\n")
+        # display([ms.hand for ms in models[whoseturn][modelbvs[whoseturn]]])
+       
+        
+        # if !(h2 in [ms.hand for ms in models[1][modelbvs[1]]]) || !(h1 in [ms.hand for ms in models[2][modelbvs[2]]])
+        #     @infiltrate()
+        # end
+
 
         candidates = Int64[]
         handindex = Int64[]
@@ -408,14 +439,16 @@ function threadednaiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector
             end
             push!(history, 0)
 
-            for r in 1:(31-total)
-                seen[3-whoseturn][r] = 4
+            for r in 1:min(31-total, 13)
+                modelbvs[3-whoseturn] .&= BVexclude[r, 4]
             end
 
-            models[3-whoseturn] = [ms for ms in models[3-whoseturn] if all([ms.hand[r] == 0 for r in 1:(31-total)])]
-            renormalize!(models[3-whoseturn])
-            advancestate!.(models[3-whoseturn], 1)
-            advancestate!.(models[whoseturn], 1)
+            s = sum([ms.prob for ms in models[3-whoseturn][modelbvs[3-whoseturn]]])
+            for ms in models[3-whoseturn][modelbvs[3-whoseturn]]
+                ms.prob /= s
+            end
+            advancestate!.(models[3-whoseturn][modelbvs[3-whoseturn]], 1)
+            advancestate!.(models[whoseturn][modelbvs[whoseturn]], 1)
 
 
 
@@ -431,23 +464,27 @@ function threadednaiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector
             inc!(seen[3-whoseturn], c)
             inc!(played[whoseturn], c)
 
-            # models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
-            filter!(ms->(ms.hand[c] > 0), models[3-whoseturn])
-            renormalize!(models[3-whoseturn])
-            for ms in models[3-whoseturn]
-                ci = getcandindex(ms.hand, c)
-                if length(hands[3-whoseturn]) > 1
+            modelbvs[3-whoseturn] .&= hmask_include(played[whoseturn])
+            s = sum([ms.prob for ms in models[3-whoseturn][modelbvs[3-whoseturn]]])
+            for ms in models[3-whoseturn][modelbvs[3-whoseturn]]
+                ms.prob /= s
+            end
+
+            for ms in models[3-whoseturn][modelbvs[3-whoseturn]]
+                ph = setdiff(ms.hand, played[whoseturn])
+                inc!(ph, c)
+                ci = getcandindex(ph, c)
+                if (length(hands[3-whoseturn]) > 1)
                     advancestate!(ms, ci)
                 end
-                dec!(ms.hand, c)
             end
             if length(hands[whoseturn]) > 1
-                advancestate!.(models[whoseturn], 1)
+                advancestate!.(models[whoseturn][modelbvs[whoseturn]], 1)
             end
                                                                     
 
         else
-            (cindex, c) = optimalplay(candidates, models[whoseturn], whoseturn)
+            (cindex, c) = optimalplay(candidates, models[whoseturn][modelbvs[whoseturn]], whoseturn)
             total += cardvalues[c]
             (length(history) > 0) ? (diffs = vcat(diffs, [c-history[end]])) : (diffs = Int64[])     
             (s, pairlength, runlength) = scoreplay(c, history, diffs, total, pairlength, runlength) ## It is important that diffs has been updated but history has not ##
@@ -458,21 +495,21 @@ function threadednaiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector
             inc!(seen[3-whoseturn], c)
             inc!(played[whoseturn], c)
             
-            # models[3-whoseturn] = [ms for ms in models[3-whoseturn] if ms.hand[c] > 0]
-            filter!(ms->(ms.hand[c] > 0), models[3-whoseturn])
-            renormalize!(models[3-whoseturn])
-            for ms in models[3-whoseturn]
-                ci = getcandindex(ms.hand, c)
-                try
-                    if length(hands[3-whoseturn]) > 1
-                        advancestate!(ms, ci)
-                    end
-                catch
-                    @infiltrate
-                end
-                dec!(ms.hand, c)
+            modelbvs[3-whoseturn] .&= hmask_include(played[whoseturn])
+            s = sum([ms.prob for ms in models[3-whoseturn][modelbvs[3-whoseturn]]])
+            for ms in models[3-whoseturn][modelbvs[3-whoseturn]]
+                ms.prob /= s
             end
-            advancestate!.(models[whoseturn], cindex)
+
+            for ms in models[3-whoseturn][modelbvs[3-whoseturn]]
+                ph = setdiff(ms.hand, played[whoseturn])
+                inc!(ph, c)
+                ci = getcandindex(ph, c)
+                if length(hands[3-whoseturn]) > 1
+                    advancestate!(ms, ci)
+                end
+            end
+            advancestate!.(models[whoseturn][modelbvs[whoseturn]], cindex)
 
         end
         whoseturn = 3 - whoseturn
@@ -597,7 +634,40 @@ function scoreplay(play::Int64, history::Vector{Int64}, diffs::Vector{Int64}, to
     return (s, pairlength, runlength);
 end
 
+"""
+BVinclude[r, n] is a bitmask for allPH that is true for all hands that include n copies of rank r
+BVexclude[r, n] is a bitmask for allPH that is true for all hands that exclude n copies of rank r
+"""
+function makebvs(f)
+    BV = Matrix{BitVector}(undef, 13, 4)
+    for r in 1:13
+        h = counter(Int64[])
+        for n in 1:4
+            inc!(h, r)
+            BV[r, n] = f.(Ref(h), allPH)
+        end
+    end
+    return BV
+end
+(@isdefined BVinclude) || (BVinclude = makebvs(issubhand))
+(@isdefined BVexclude) || (BVexclude = makebvs(excludes))
 
+
+function hmask_include(h)
+    m = trues(1820)
+    for (r, n) in pairs(h)
+        m = m .& BVinclude[r, n]
+    end
+    return m
+end
+
+function hmask_exclude(h)
+    m = trues(1820)
+    for (r, n) in pairs(h)
+        m = m .& BVexclude[r, n]
+    end
+    return m
+end
 
 
 

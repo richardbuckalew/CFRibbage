@@ -298,9 +298,11 @@ function logresult(h1cards::Vector{Card}, h2cards::Vector{Card}, turncard::Card,
     lock(resultlock)
     try
         push!(results,
-                OrderedDict(
-                    "ndeal" => nresults+1, "h1" => h1cards, "h2" => h2cards, "turn" => turncard, 
-                    "d1" => d1cards, "d2" => d2cards, "play" => playscores, "show" => showscores
+                json(
+                    OrderedDict(
+                        "ndeal" => nresults+1, "h1" => h1cards, "h2" => h2cards, "turn" => turncard, 
+                        "d1" => d1cards, "d2" => d2cards, "play" => playscores, "show" => showscores
+                    )
                 )
             )
         global nresults += 1
