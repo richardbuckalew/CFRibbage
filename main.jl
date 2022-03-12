@@ -1,5 +1,5 @@
 using Combinatorics, Serialization, IterTools, ProgressMeter, StatsBase, ProfileView, BenchmarkTools
-using DataStructures, Random, DataFrames, ThreadTools, Infiltrator, LinearAlgebra, TimerOutputs, Logging
+using DataStructures, Random, DataFrames, ThreadTools, Infiltrator, LinearAlgebra, TimerOutputs, JSON
 
 
 # (@isdefined to) || (const to = TimerOutput())
@@ -88,6 +88,9 @@ include("dbUtils.jl");
 (@isdefined M) || (@time global M = loadM())
 (@isdefined results) || (@time global results = deserialize("results.jls"))
 (@isdefined nresults) || (global nresults = length(results))
+
+(@isdefined BVinclude) || (BVinclude = makebvs(issubhand))
+(@isdefined BVexclude) || (BVexclude = makebvs(excludes))
 
 
 
@@ -428,11 +431,12 @@ function dobatch(ndeals = 10000)
 
 end
 
-for ii in 1:10
+for ii in 1:100
+    GC.gc()
     print(ii, " ")
-    @time dobatch(10000)
+    @time dobatch(1000)
 end
-# saveprogress()
+saveprogress()
 
 
 

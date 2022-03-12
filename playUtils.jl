@@ -368,20 +368,42 @@ function naiveplay_threaded(hands::Vector{Vector{Int64}}, discards::Vector{Vecto
     played = [counter(Int64[]) for ii in (1, 2)]
     seen = [counter(vcat(hands[ii], discards[ii], [turnrank])) for ii in (1, 2)]
 
-    models = [ModelState[], ModelState[]]
+
+    models = [
+        [isnothing(M[hid1, phID[ph]]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[hid1, phID[ph]], 1, 1.0) for ph in allPH],
+        [isnothing(M[phID[ph], hid2]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[phID[ph], hid2], 1, 1.0) for ph in allPH]
+            ]
+    
     lock(ponelock)
     try
-        models[1] = [isnothing(M[hid1, phID[ph]]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[hid1, phID[ph]], 1, phPoneProbs[ph]) for ph in allPH]
+        setinitialprobs!(models[1], 2)
     finally
         unlock(ponelock)
     end
 
     lock(dealerlock)
     try
-        models[2] = [isnothing(M[phID[ph], hid2]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[phID[ph], hid2], 1, phDealerProbs[ph]) for ph in allPH]
+        setinitialprobs!(models[2], 1)
     finally
         unlock(dealerlock)
     end
+
+
+
+    # models = [ModelState[], ModelState[]]
+    # lock(ponelock)
+    # try
+    #     models[1] = [isnothing(M[hid1, phID[ph]]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[hid1, phID[ph]], 1, phPoneProbs[ph]) for ph in allPH]
+    # finally
+    #     unlock(ponelock)
+    # end
+
+    # lock(dealerlock)
+    # try
+    #     models[2] = [isnothing(M[phID[ph], hid2]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[phID[ph], hid2], 1, phDealerProbs[ph]) for ph in allPH]
+    # finally
+    #     unlock(dealerlock)
+    # end
 
 
     # lock(problock)
@@ -649,9 +671,6 @@ function makebvs(f)
     end
     return BV
 end
-(@isdefined BVinclude) || (BVinclude = makebvs(issubhand))
-(@isdefined BVexclude) || (BVexclude = makebvs(excludes))
-
 
 function hmask_include(h)
     m = trues(1820)
