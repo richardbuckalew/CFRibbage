@@ -246,6 +246,13 @@ Afternoon: returned to the multithreading, but did it correctly this time with t
  3/11/22: Spring Break! Woo! Time to finally do the things I've been thinking about all week.
  First: Just finished moving to the bitvector version of naiveplay(). threadedCFR() is now 90ms per deal. BIG WHOOP!!
 
+3/12/22: The slowdown, while still present, is much much smaller. And random crashes seem to be gone. Full-time training is 3M deals per day. Time to write some software to check convergence!
+
+3/13/22: Just kidding! When I tried to run a third batch yesterday, first there was a 30% slowdown on one batch, and then a crash. The next run crashed immediately. My gut is telling me it's the results vector; 2M json strings is a lot. Anyway, that data was speculative, and if I stop saving it that's one fewer lock slowing things down. Probably the correct thing to do is a mmap'ed database on disk. But I don't *need* that data anyway, so I'm gonna see if omitting it fixes anything.
+
+Before I set the training to run again, I'm going to build a (very) simple analysis suite so I can get some idea of progress. My back-of-the-envelope was 40M deals to get something that could reasonably be called a 'solution' (i.e., an epsilon-solution, but probably for a fairly large epsilon). Something simple like an L_inf norm will be a good sanity check on that. To that end: Added a new file to the repo. analysisUtils.jl
+
+
 
 
 
