@@ -9,3 +9,6 @@
 {"nSnapshot":10,"nDeals":11014375,"timestamp":"2022-03-17T14:34:52.661","dCoverage":0.9989688345026106,"dMin":0,"dMax":34,"pCoverage":0.9990103718841772,"pMin":0,"pMax":34}
 {"nSnapshot":11,"nDeals":11024375,"timestamp":"2022-03-18T15:01:46.779","dCoverage":0.9989740266753064,"dMin":0,"dMax":34,"pCoverage":0.9990176409259514,"pMin":0,"pMax":34}
 {"nSnapshot":12,"nDeals":11075375,"timestamp":"2022-03-19T09:19:05.400","dCoverage":0.9989875263243155,"dMin":0,"dMax":34,"pCoverage":0.999034255878578,"pMin":0,"pMax":34}
+{"nSnapshot":13,"nDeals":11275375,"timestamp":"2022-03-19T17:25:32.448","dCoverage":0.9990508708312046,"dMin":0,"dMax":35,"pCoverage":0.9990809854328403,"pMin":0,"pMax":34}
+{"nSnapshot":14,"nDeals":11285375,"timestamp":"2022-03-19T17:30:55.369","dCoverage":0.9990560630039004,"dMin":0,"dMax":35,"pCoverage":0.9990820238673794,"pMin":0,"pMax":34}
+{"nSnapshot":15,"nDeals":11375375,"timestamp":"2022-03-19T18:13:09.818","dCoverage":0.9990789085637619,"dMin":0,"dMax":35,"pCoverage":0.9991048694272411,"pMin":0,"pMax":35}

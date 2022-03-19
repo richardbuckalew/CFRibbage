@@ -370,18 +370,12 @@ function naiveplay_threaded(hands::Vector{Vector{Int64}}, discards::Vector{Vecto
         [isnothing(M[phID[ph], hid2]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[phID[ph], hid2], 1, 1.0) for ph in allPH]
             ]
     
-    lock(ponelock)
-    try
+    lock(ponelock) do
         setinitialprobs!(models[1], phPoneProbs)
-    finally
-        unlock(ponelock)
     end
 
-    lock(dealerlock)
-    try
+    lock(dealerlock) do
         setinitialprobs!(models[2], phDealerProbs)
-    finally
-        unlock(dealerlock)
     end
 
     modelbvs = [hmask_exclude(seen[ii]) for ii in (1, 2)]

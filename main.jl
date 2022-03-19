@@ -337,7 +337,7 @@ function train(nbatches, batchsize)
     for nbatch in 1:nbatches
         print(nbatch, " ")
         @time dobatch(batchsize, db, phDealerProbs, phPoneProbs)
-        if (nbatch > 0) && (nbatch % 100 == 0)
+        if (nbatch > 0) && (nbatch % 50 == 0)
             serialize("db.jls", db)
             serialize("phDealerProbs.jls", phDealerProbs)
             serialize("phPoneProbs.jls", phPoneProbs)
@@ -366,7 +366,6 @@ function train(nbatches, batchsize)
     serialize("snapshots/snapshot_" * string(n) * ".jls", profilesnapshot)
 
 end
-
 
 
 
