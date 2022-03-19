@@ -331,12 +331,8 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
             renormalize!(models[3-whoseturn])
             for ms in models[3-whoseturn]
                 ci = getcandindex(ms.hand, c)
-                try
-                    if length(hands[3-whoseturn]) > 1
-                        advancestate!(ms, ci)
-                    end
-                catch
-                    @infiltrate
+                if length(hands[3-whoseturn]) > 1
+                    advancestate!(ms, ci)
                 end
                 dec!(ms.hand, c)
             end
@@ -350,7 +346,7 @@ function naiveplay(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}
 
 end
 
-function naiveplay_threaded(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}, turnrank::Int64, dealerlock::ReentrantLock, ponelock::ReentrantLock)
+function naiveplay_threaded(hands::Vector{Vector{Int64}}, discards::Vector{Vector{Int64}}, turnrank::Int64, phDealerProbs, phPoneProbs, dealerlock::ReentrantLock, ponelock::ReentrantLock)
 
     h1 = counter(hands[1])
     hid1 = phID[h1]
@@ -376,44 +372,17 @@ function naiveplay_threaded(hands::Vector{Vector{Int64}}, discards::Vector{Vecto
     
     lock(ponelock)
     try
-        setinitialprobs!(models[1], 2)
+        setinitialprobs!(models[1], phPoneProbs)
     finally
         unlock(ponelock)
     end
 
     lock(dealerlock)
     try
-        setinitialprobs!(models[2], 1)
+        setinitialprobs!(models[2], phDealerProbs)
     finally
         unlock(dealerlock)
     end
-
-
-
-    # models = [ModelState[], ModelState[]]
-    # lock(ponelock)
-    # try
-    #     models[1] = [isnothing(M[hid1, phID[ph]]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[hid1, phID[ph]], 1, phPoneProbs[ph]) for ph in allPH]
-    # finally
-    #     unlock(ponelock)
-    # end
-
-    # lock(dealerlock)
-    # try
-    #     models[2] = [isnothing(M[phID[ph], hid2]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[phID[ph], hid2], 1, phDealerProbs[ph]) for ph in allPH]
-    # finally
-    #     unlock(dealerlock)
-    # end
-
-
-    # lock(problock)
-    # try
-    #     models = [  [isnothing(M[hid1, phID[ph]]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[hid1, phID[ph]], 1, phPoneProbs[ph]) for ph in allPH], 
-    #                 [isnothing(M[phID[ph], hid2]) ? ModelState(ph, FlatTree((), ()), 1, 1.0) : ModelState(ph, M[phID[ph], hid2], 1, phDealerProbs[ph]) for ph in allPH]
-    #              ]
-    # finally
-    #     unlock(problock)
-    # end
 
     modelbvs = [hmask_exclude(seen[ii]) for ii in (1, 2)]
 
@@ -544,13 +513,9 @@ end
 
 
 
-function setinitialprobs!(model::Vector{ModelState}, player::Int64)
+function setinitialprobs!(model::Vector{ModelState}, probs)
     for ms in model
-        if player == 1
-            ms.prob = phDealerProbs[ms.hand]
-        else
-            ms.prob = phPoneProbs[ms.hand]
-        end
+        ms.prob = probs[ms.hand]
     end
 end
 

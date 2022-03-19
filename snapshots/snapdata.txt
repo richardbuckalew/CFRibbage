@@ -1,1 +1,11 @@
-{"nSnapshot":1,"nDeals":2107375,"dCoverage":0.8655974944651439,"pCoverage":0.8659277166485979,"timestamp":"2022-03-13T11:38:40.810"}
+{"nSnapshot":2,"nDeals":3107375,"timestamp":"2022-03-13T21:34:47.429","dCoverage":0.940254707223766,"dMin":0,"dMax":16,"pCoverage":0.9402962446053326,"pMin":0,"pMax":16}
+{"nSnapshot":3,"nDeals":4007375,"timestamp":"2022-03-14T04:16:44.398","dCoverage":0.9684191287949591,"dMin":0,"dMax":18,"pCoverage":0.9689082314629051"pMin":0,"pMax":18,}
+{"nSnapshot":4,"nDeals":4907375,"timestamp":"2022-03-14T13:52:32.720","dCoverage":0.9823819196085517,"dMin":0,"dMax":20,"pCoverage":0.98268202719037,"pMin":0,"pMax":20}
+{"nSnapshot":5,"nDeals":6007375,"timestamp":"2022-03-14T22:26:50.803","dCoverage":0.9906551275820675,"dMin":0,"dMax":22,"pCoverage":0.990868006662596,"pMin":0,"pMax":23}
+{"nSnapshot":6,"nDeals":7007375,"timestamp":"2022-03-15T14:13:49.046","dCoverage":0.9944225680901527,"dMin":0,"dMax":25,"pCoverage":0.9946686770759345,"pMin":0,"pMax":24}
+{"nSnapshot":7,"nDeals":8007375,"timestamp":"2022-03-15T22:11:10.939","dCoverage":0.9965243595974197,"dMin":0,"dMax":28,"pCoverage":0.9966520870457368,"pMin":0,"pMax":27}
+{"nSnapshot":8,"nDeals":9007375,"timestamp":"2022-03-16T13:43:33.794","dCoverage":0.9977756732171117,"dMin":0,"dMax":30,"pCoverage":0.9978795166710281,"pMin":0,"pMax":30}
+{"nSnapshot":9,"nDeals":10014375,"timestamp":"2022-03-17T01:33:18.661","dCoverage":0.9985306151270836,"dMin":0,"dMax":31,"pCoverage":0.9985679987704935,"pMin":0,"pMax":31}
+{"nSnapshot":10,"nDeals":11014375,"timestamp":"2022-03-17T14:34:52.661","dCoverage":0.9989688345026106,"dMin":0,"dMax":34,"pCoverage":0.9990103718841772,"pMin":0,"pMax":34}
+{"nSnapshot":11,"nDeals":11024375,"timestamp":"2022-03-18T15:01:46.779","dCoverage":0.9989740266753064,"dMin":0,"dMax":34,"pCoverage":0.9990176409259514,"pMin":0,"pMax":34}
+{"nSnapshot":12,"nDeals":11075375,"timestamp":"2022-03-19T09:19:05.400","dCoverage":0.9989875263243155,"dMin":0,"dMax":34,"pCoverage":0.999034255878578,"pMin":0,"pMax":34}

@@ -243,18 +243,34 @@ Afternoon: returned to the multithreading, but did it correctly this time with t
  - preallocate all the play solve data structures in dobatch, and reuse them across all the plays within a given thread. This should (?) reduce GC.
 
 
- 3/11/22: Spring Break! Woo! Time to finally do the things I've been thinking about all week.
- First: Just finished moving to the bitvector version of naiveplay(). threadedCFR() is now 90ms per deal. BIG WHOOP!!
+3/11/22: Spring Break! Woo! Time to finally do the things I've been thinking about all week.
+First: Just finished moving to the bitvector version of naiveplay(). threadedCFR() is now 90ms per deal. BIG WHOOP!!
+
+
 
 3/12/22: The slowdown, while still present, is much much smaller. And random crashes seem to be gone. Full-time training is 3M deals per day. Time to write some software to check convergence!
 
-3/13/22: Just kidding! When I tried to run a third batch yesterday, first there was a 30% slowdown on one batch, and then a crash. The next run crashed immediately. My gut is telling me it's the results vector; 2M json strings is a lot. Anyway, that data was speculative, and if I stop saving it that's one fewer lock slowing things down. Probably the correct thing to do is a mmap'ed database on disk. But I don't *need* that data anyway, so I'm gonna see if omitting it fixes anything.
+
+
+3/13/22: Just kidding! When I tried to run a third batch yesterday, first there was a 30% slowdown on one group of 10,000, and then a crash. The next run crashed immediately. My gut is telling me it's the results vector; 2M json strings is a lot. Anyway, that data was speculative, and if I stop saving it that's one fewer lock slowing things down. Probably the correct thing to do is a mmap'ed database on disk. But I don't *need* that data anyway, so I'm gonna see if omitting it fixes anything.
 
 Before I set the training to run again, I'm going to build a (very) simple analysis suite so I can get some idea of progress. My back-of-the-envelope was 40M deals to get something that could reasonably be called a 'solution' (i.e., an epsilon-solution, but probably for a fairly large epsilon). Something simple like an L_inf norm will be a good sanity check on that. To that end: Added a new file to the repo. analysisUtils.jl
 
+Training back on track; no crashes since removing results. On 6 cores, about 45% cpu utilization and about 35 deals/s. Also no more slowdowns; seems my gut may have been correct. Saving a snapshot every 1000000 deals.
+
+A bayesian play solver still nags at the back of my mind. The best case scenario would be to fnish training, or at least come close, write the bayesian solver, and see that it gives the same play strategies as the naive solver. If it doesn't, then I can switch solvers partway through -- this is just a question of initial condition after all, so why privilege the uniform I.C.? OTOH, the naive solver may be taking us to a local minimum, so we'll see.
+
+Something I see I haven't mentioned yet in the changelog: I've moved to a local git installation. I'm taking this seriously as a portfolio project, even though it's a solo and it started out with my ideosyncracies. There's going to continue to be a lot of work to do, especially on the eventual Javascript front-end, so I'm comfortable with a slower transition to a more industry-standard workflow in the meantime. That also means writing tests and documentation. At a training rate of ~2M deals per day, it's going to be a month before I have a solution. That leaves plenty of time to do these other things -- especially if I can get the training to run in powershell rather than thru vscode; then I can develop and train at the same time. Unfortunately, moving to a command-line instantiation seems to have precipitated the crashing previously, so I hesitate to try it. If there comes a point when I'm not busy otherwise, I'll get to it.
 
 
 
+3/15/22: Still training, going great. No more crashes, no more slowdowns. Been able to do other things and still feel productive vis-a-vis cribbage. After 7M deals, we have coverage of 99.45%. We expect 100% coverage at around 13M deals.
+
+
+
+3/17/22: It occurred to me that having db, phPoneProbs, and phDealerProbs be global was for convenience, as I was developing the individual pieces of code that dealt with them. I spent an hour wrapping them inside a function call ( train() ) and avhieved a modest 10% speedup. Training continues at ~40 deals/sec. Should hit 100% coverage today or tomorrow.
+
+3/18/22: Well, it's crashing again. This is really frustrating!!!
 
 ******* TODO *******
 ********************
