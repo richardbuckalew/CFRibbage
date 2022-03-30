@@ -1,4 +1,4 @@
-using Combinatorics, Serialization, IterTools, StatsBase, DataStructures, Random, DataFrames, ThreadTools, LinearAlgebra
+using BenchmarkTools, Combinatorics, Serialization, IterTools, StatsBase, DataStructures, Random, DataFrames, Folds, FLoops, ThreadTools, LinearAlgebra
 
 
 struct Card
@@ -18,6 +18,8 @@ end
 
 (@isdefined cardsuits) || (const cardsuits = collect(1:4))
 (@isdefined cardranks) || (const cardranks = collect(1:13))
+(@isdefined testsuits) || (const testsuits = [1, 2])
+(@isdefined testranks) || (const testranks = collect(1:7))
 (@isdefined cardvalues) || (const cardvalues = vcat(collect(1:10), [10, 10, 10]))
 (@isdefined suitnames) || (const suitnames = ["spades", "hearts", "diamonds", "clubs"])
 (@isdefined ranknames) || (const ranknames = ["ace", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "jack", "queen", "king"])
@@ -34,6 +36,7 @@ end
 
 
 (@isdefined standardDeck) || (const standardDeck = [Card(r,s) for r in cardranks for s in cardsuits])
+(@isdefined testDeck) || (const testDeck = [Card(r,s) for r in testranks for s in testsuits])
 (@isdefined rankDeck) || (const rankDeck = [c.rank for c in standardDeck])
 
 (@isdefined fullname) || (const fullname(c::Card) = ranknames[c.rank] * " of " * suitnames[c.suit])
@@ -70,21 +73,31 @@ const discardType = Union{
 }
 
 
+function dealHands(deck = standardDeck, handSize = 6)
+    dealtCards = sample(deck, handSize * 2 + 1, replace = false)
+    h1 = dealtCards[1:handSize]
+    h2 = dealtCards[handSize+1:2*handSize]
+    turn = dealtCards[end]
+    return (h1, h2, turn)
+end
+
 include("playUtils.jl")
 include("dbUtils.jl")
 include("analysisUtils.jl")
 
 
 
-
-(@isdefined handID) || (@time const handID = deserialize("handID.jls"))  # Tuple => NTuple{2, Int64}
+(@isdefined hRows) || (@time const hRows = deserialize("hRows.jls"))  # Tuple => NTuple{2, Int64}
 (@isdefined allPH) || (@time const allPH = deserialize("allPH.jls"))     # Vector{Counter}
 (@isdefined phID) || (@time const phID = deserialize("phID.jls"))        # Counter => Int64
 (@isdefined phRows) || (@time const phRows = deserialize("phRows.jls"))  # Counter => Vector{Int64}
-(@isdefined M) || (@time const M = loadM())
+(@isdefined M) || (@time const M = tmap(unpackflat, deserialize("M.jls")))
 
-(@isdefined BVinclude) || (const BVinclude = makebvs(issubhand))
-(@isdefined BVexclude) || (const BVexclude = makebvs(excludes))
+(@isdefined nph) || (const nph = length(allPH))
+(@isdefined BVinclude) || (const BVinclude = makebvs(issubhand, cardranks, cardsuits))
+(@isdefined BVexclude) || (const BVexclude = makebvs(excludes, cardranks, cardsuits))
+
+
 
 
 
@@ -160,13 +173,6 @@ function scoreShow(h::Vector{Card}, turn::Card; isCrib = false)
 
 end
 
-function dealHands(deck = standardDeck, handSize = 6)
-    dealtCards = sample(deck, handSize * 2 + 1, replace = false)
-    h1 = dealtCards[1:handSize]
-    h2 = dealtCards[handSize+1:2*handSize]
-    turn = dealtCards[end]
-    return (h1, h2, turn)
-end
 
 function makeCrib(d1, d2)
     return vcat(d1, d2)
@@ -177,29 +183,23 @@ function stripsuits(D::discardType)::Vector{Int64}
 end
 
 
-function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Card, 
-                    db, phDealerProbs, phPoneProbs,
-                    dblock::ReentrantLock, dealerlock::ReentrantLock, ponelock::ReentrantLock)
-
-    (h1, sp1) = canonicalize(h1Cards)
-    (h2, sp2) = canonicalize(h2Cards)
-
-    hi1 = handID[h1]
-    h1rows = hi1[1]:hi1[2]
-    n1 = hi1[2] - hi1[1] + 1
-    hi2 = handID[h2]
-    h2rows = hi2[1]:hi2[2]
-    n2 = hi2[2] - hi2[1] + 1
 
 
 
-    df1 = nothing
-    df2 = nothing 
-    lock(dblock) do
-        df1 = db[h1rows, :]         # not @view because db may be updated in the background. This is a slowdown of ~150μs per deal
-        df2 = db[h2rows, :]
-    end
-    
+
+function CFR(h1cards, h2cards, turncard, db, phDealerProbs, phPoneProbs, reusablemodels)
+
+    (h1, sp1) = canonicalize(h1cards)
+    (h2, sp2) = canonicalize(h2cards)
+
+
+    h1rows = range(hRows[h1]...)
+    h2rows = range(hRows[h2]...)
+    n1 = length(h1rows)
+    n2 = length(h2rows)
+
+    df1 = db[h1rows, :]
+    df2 = db[h2rows, :]      
 
     d1cards = [unCanonicalize(d, sp1) for d in @view df1[:, :discard]]
     d2cards = [unCanonicalize(d, sp2) for d in @view df2[:, :discard]]
@@ -216,14 +216,18 @@ function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Car
     di1 = sample(1:n1, p1weights)
     di2 = sample(1:n2, p2weights)
 
-    p1playresults = [naiveplay_threaded([[p1h...], [p2playhands[di2]...]], [p1d, d2ranks[di2]], turncard.rank, phDealerProbs, phPoneProbs, dealerlock, ponelock) for (p1h, p1d) in zip(p1playhands, d1ranks)]
-    p2playresults = [naiveplay_threaded([[p1playhands[di1]...], [p2h...]], [d1ranks[di1], p2d], turncard.rank, phDealerProbs, phPoneProbs, dealerlock, ponelock) for (p2h, p2d) in zip(p2playhands, d2ranks)]
+    # p1playresults = [play([[p1h...], [p2playhands[di2]...]], [p1d, d2ranks[di2]], turncard.rank, phDealerProbs, phPoneProbs) for (p1h, p1d) in zip(p1playhands, d1ranks)]
+    # p2playresults = [play([[p1playhands[di1]...], [p2h...]], [d1ranks[di1], p2d], turncard.rank, phDealerProbs, phPoneProbs) for (p2h, p2d) in zip(p2playhands, d2ranks)]
+
+    p1playresults = Folds.collect(play([[p1h...], [p2playhands[di2]...]], [p1d, d2ranks[di2]], turncard.rank, phDealerProbs, phPoneProbs, reusablemodels[1][ii]) for (ii, (p1h, p1d)) in enumerate(zip(p1playhands, d1ranks)))
+    p2playresults = Folds.collect(play([[p1playhands[di1]...], [p2h...]], [d1ranks[di1], p2d], turncard.rank, phDealerProbs, phPoneProbs, reusablemodels[2][ii]) for (ii, (p2h, p2d)) in enumerate(zip(p2playhands, d2ranks)))
+
 
     p1playmargins = [result[1] for result in p1playresults]
     p2playmargins = [result[1] for result in p2playresults]
 
-    p1showhands = [setdiff(h1Cards, d) for d in d1cards]
-    p2showhands = [setdiff(h2Cards, d) for d in d2cards]
+    p1showhands = [setdiff(h1cards, d) for d in d1cards]
+    p2showhands = [setdiff(h2cards, d) for d in d2cards]
 
     p1cribs = [vcat(d1, d2cards[di2]) for d1 in d1cards]
     p2cribs = [vcat(d1cards[di1], d2) for d2 in d2cards]
@@ -237,136 +241,139 @@ function threadedCFR(h1Cards::Vector{Card}, h2Cards::Vector{Card}, turncard::Car
     p1showmargins = [ss - p2showscores[di2] for ss in p1showscores] .+ p1cribscores
     p2showmargins = [p1showscores[di1] - ss for ss in p2showscores] .+ p2cribscores
 
-    p1objectives = zeros(Int64, n1)
-    p2objectives = zeros(Int64, n2)
     p1objectives = p1playmargins .+ p1showmargins
     p2objectives = -p2playmargins .- p2showmargins
 
     p1regrets = p1objectives .- p1objectives[di1]
     p2regrets = p2objectives .- p2objectives[di2]
 
+    olddealerprobs = df1.dealerplayprob
+    oldponeprobs = df2.poneplayprob
 
-    olddealerprobs = nothing
-    oldponeprobs = nothing
-    newdealerprobs = nothing
-    newponeprobs = nothing
-    lock(dblock) do
-        for (nrow, drow) in enumerate(h1rows)
-            (nrow == di1) && continue
-            db.dealerregret[drow] = (db.dealerplaycount[drow] * db.dealerregret[drow] + p1regrets[nrow])
-            db.dealerplaycount[drow] += 1
-            db.dealerregret[drow] /= db.dealerplaycount[drow]
-        end
-        for (nrow, drow) in enumerate(h2rows)
-            (nrow == di2) && (continue)
-            db.poneregret[drow] = (db.poneplaycount[drow] * db.poneregret[drow] + p2regrets[nrow])
-            db.poneplaycount[drow] += 1
-            db.poneregret[drow] /= db.poneplaycount[drow]
-        end
-        if all(db.dealerregret[h1rows] .<= 0)
-            db.dealerprofile[h1rows] .= 1/n1
-        else
-            db.dealerprofile[h1rows] = max.(db.dealerregret[h1rows], 0.0) ./ sum(max.(db.dealerregret[h1rows], 0.0))
-        end
-        if all(db.poneregret[h2rows] .<= 0)
-            db.poneprofile[h2rows] .= 1/n2
-        else
-            db.poneprofile[h2rows] = max.(db.poneregret[h2rows], 0.0) ./ sum(max.(db.poneregret[h2rows], 0.0))
-        end
-
-        olddealerprobs = db.dealerplayprob[h1rows]
-        oldponeprobs = db.poneplayprob[h2rows]
-
-        db.dealerplayprob[h1rows] = view(db, h1rows, :dealerprofile) .* view(db, h1rows, :prob)
-        db.poneplayprob[h2rows] = view(db, h2rows, :poneprofile) .* view(db, h2rows, :prob)
-
-        newdealerprobs = db.dealerplayprob[h1rows]
-        newponeprobs = db.poneplayprob[h2rows]
+    for nrow in 1:n1
+        (nrow == di1) && continue
+        df1.dealerregret[nrow] = df1.dealerplaycount[nrow] * df1.dealerregret[nrow] + p1regrets[nrow]
+        df1.dealerplaycount[nrow] += 1
+        df1.dealerregret[nrow] /= df1.dealerplaycount[nrow]
     end
-
-    lock(dealerlock) do 
-        for (ii, ph) in enumerate(p1playhands)
-            phDealerProbs[counter(ph)] += (newdealerprobs[ii] - olddealerprobs[ii])
-        end        
+    if any(df1.dealerregret .> 0)
+        df1.dealerprofile = max.(df1.dealerregret, 0.0) ./ sum(max.(df1.dealerregret, 0.0))
+    else
+        df1.dealerprofile .= 1 / n1
     end
+    newdealerprobs = df1.dealerprofile .* df1.prob
 
-    lock(ponelock) do
-        for (ii, ph) in enumerate(p2playhands)
-            phPoneProbs[counter(ph)] += (newponeprobs[ii] - oldponeprobs[ii])
-        end
+    for nrow in 1:n2
+        (nrow == di2) && continue
+        df2.poneregret[nrow] = df2.poneplaycount[nrow] * df2.poneregret[nrow] + p2regrets[nrow]
+        df2.poneplaycount[nrow] += 1
+        df2.poneregret[nrow] /= df2.poneplaycount[nrow]
     end
+    if any(df2.poneregret .> 0)
+        df2.poneprofile = max.(df2.poneregret, 0.0) ./ sum(max.(df2.poneregret, 0.0))
+    else
+        df2.poneprofile .= 1 / n2
+    end
+    newponeprobs = df2.poneprofile .* df2.prob
+
+    db[h1rows, :dealerplaycount] = df1.dealerplaycount
+    db[h1rows, :dealerregret] = df1.dealerregret
+    db[h1rows, :dealerprofile] = df1.dealerprofile   
+    db[h1rows, :dealerplayprob] = newdealerprobs
+    db[h2rows, :poneplaycount] = df2.poneplaycount
+    db[h2rows, :poneregret] = df2.poneregret
+    db[h2rows, :poneprofile] = df2.poneprofile     
+    db[h2rows, :poneplayprob] = newponeprobs
+
+    for (ii, ph) in enumerate(p1playhands)
+        phDealerProbs[counter(ph)] += newdealerprobs[ii] - olddealerprobs[ii]
+    end        
+    for (ii, ph) in enumerate(p2playhands)
+        phPoneProbs[counter(ph)] += newponeprobs[ii] - oldponeprobs[ii]
+    end    
+        
 
 
-    return (d1cards[di1], d2cards[di2], p1playresults[di1][2][1], p2playresults[di2][2][2], p1showscores[di1], p2showscores[di2])
+    # display(db[h1rows,:])
+    # display([phDealerProbs[counter(ph)] for ph in p1playhands])
+    # display(db[h2rows,:])
+    # display([phPoneProbs[counter(ph)] for ph in p2playhands])
 
 end
 
 
-function oneDeal(db, phDealerProbs, phPoneProbs, dblock::ReentrantLock, dealerlock::ReentrantLock, ponelock::ReentrantLock)
 
-    (h1cards, h2cards, turncard) = dealHands()
-    threadedCFR(h1cards, h2cards, turncard, db, phDealerProbs, phPoneProbs, dblock, dealerlock, ponelock)
+@inline function resetmodels!(reusablemodels)
+    for ii in (1,2)
+        for jj in 1:16
+            for kk in 1:2
+                for mm in 1:nph
+                    reusablemodels[ii][jj][kk][mm] = true
+                end
+            end
+        end
+    end
+end
+
+
+function train()
     
-end
 
-
-
-function dobatch(ndeals, db, phDealerProbs, phPoneProbs)
-
-    dblock = ReentrantLock()
-    dealerlock = ReentrantLock()
-    ponelock = ReentrantLock()
-
-
-    Threads.@threads for ii in 1:ndeals
-
-        oneDeal(db, phDealerProbs, phPoneProbs, dblock, dealerlock, ponelock)
-
-    end
-
-
-end
-
-
-function train(nbatches, batchsize)
+    display("Loading... ")
 
     db = deserialize("db.jls")
     phDealerProbs = deserialize("phDealerProbs.jls")
     phPoneProbs = deserialize("phPoneProbs.jls")
 
-    for nbatch in 1:nbatches
+    reusablemodels = [[[trues(nph), trues(nph)] for ii in 1:16] for jj in (1,2)]
+
+
+    for nbatch in 1:20
+        
         print(nbatch, " ")
-        @time dobatch(batchsize, db, phDealerProbs, phPoneProbs)
-        if (nbatch > 0) && (nbatch % 50 == 0)
+        @time begin
+            for ndeal in 1:100000
+
+                resetmodels!(reusablemodels)
+                (h1cards, h2cards, turncard) = dealHands(standardDeck)
+                CFR(h1cards, h2cards, turncard, db, phDealerProbs, phPoneProbs, reusablemodels)
+
+            end
+
+            mv("db.jls", "backup/db.bak", force=true)
+            mv("phDealerProbs.jls", "backup/phDealerProbs.bak", force=true)
+            mv("phPoneProbs.jls", "backup/phPoneProbs.bak", force=true)
+
             serialize("db.jls", db)
             serialize("phDealerProbs.jls", phDealerProbs)
             serialize("phPoneProbs.jls", phPoneProbs)
+
         end
     end
+    savesnapshot(db)
 
-
-    (ddeals, dmin, dmax, dcoverage, pdeals, pmin, pmax, pcoverage) = dealcoverage_local(db)
-    profilesnapshot = db[:, [:dealerprofile, :poneprofile]]
-
-    n = 1
-    for filename in readdir("snapshots")
-        if occursin("snapshot", filename)
-            n = max(n, parse(Int64, filename[end-4])) + 1
-        end
-    end
-
-    sdata = OrderedDict("nSnapshot" => n, "nDeals" => max(ddeals, pdeals), "timestamp" => now(),
-                 "dCoverage" => dcoverage, "dMin" => dmin, "dMax" => dmax,
-                 "pCoverage" => pcoverage, "pMin" => pmin, "pMax" => pmax)
-
-    open("snapshots/snapdata.txt", "a") do io
-        write(io, json(sdata)) + write(io, "\n")
-    end
-
-    serialize("snapshots/snapshot_" * string(n) * ".jls", profilesnapshot)
 
 end
 
+
+
+
+function testCFR()
+
+    db = deserialize("db.jls")
+    phDealerProbs = deserialize("phDealerProbs.jls")
+    phPoneProbs = deserialize("phPoneProbs.jls")
+
+
+    @btime begin
+        (h1cards, h2cards, turncard) = dealHands(standardDeck)
+        CFR(h1cards, h2cards, turncard, $db, $phDealerProbs, $phPoneProbs)
+    end
+
+    # (h1cards, h2cards, turncard) = dealHands(standardDeck)
+    # @time CFR(h1cards, h2cards, turncard, db, phDealerProbs, phPoneProbs)
+
+end
 
 
 

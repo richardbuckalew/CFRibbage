@@ -1,52 +1,4 @@
-
-
-(@isdefined CC) || (const CC = collect.([combinations(cardranks, ii) for ii in 0:6]))
-function newSuits(H)
-
-    nSuit = length(H) + 1
-    (nSuit > 1) ? (cardsleft = 6 - sum(length.(H))) : (cardsleft = 6)
-    (cardsleft == 0) && (return [])
-
-    NS = []
-
-    if nSuit == 1
-        m = 2
-        M = 6
-    elseif 1 < nSuit < 4
-        m = Int(ceil(cardsleft / (4 - nSuit + 1)))
-        M = cardsleft
-    else
-        m = cardsleft
-        M = cardsleft
-    end
-
-    for suitSize in m:M
-        append!(NS, CC[suitSize+1])
-    end
-
-    return NS
-
-end
-
-function addSuit(HH)
-
-
-    newHH = Set([])
-
-    for H in HH
-        NS = newSuits(H)
-        (length(NS) == 0) && push!(newHH, copy(H))
-        for ns in NS
-            G = copy(H)
-            push!(G, ns)
-            sort!(sort!(G), by = length)
-            push!(newHH, G)
-        end
-    end
-
-    return newHH
-
-end
+using ProgressMeter
 
 function getDiscards(H) ## Discard format: A tuple of tuples, one for each suit in the canonical form of the hand. 
                         ## Respects canonical suit order on a per-hand basis
@@ -90,101 +42,187 @@ function getPlayHand(h, d)
     return  Tuple(sort(vcat([Array(setdiff(h[ii], d[ii])) for ii in 1:4]...)))
 end
 
-function dealAllHands()
+function dealAllHands(deck)
 
-    # dealCounts = Dict{Any, Int64}();
-    dealCounts = counter(Vector{Vector{Int64}})
-    deck = standardDeck
+    handCounts = counter(handType)
 
-
-    for comb in combinations(deck, 6)
-
+    display("Dealing & Canonicalizing hands...")
+    @showprogress 1 for comb in combinations(deck, 6)
         (H, sp) = canonicalize(comb)
-
-        inc!(dealCounts, H)
-        # _ = get!(dealCounts, H, 0);
-        # dealCounts[H] += 1;
-
+        inc!(handCounts, H)
     end
-
-    return dealCounts;
+    return handCounts;
 
 end
 
-generateAllHands() = [[]] |> addSuit |> addSuit |> addSuit |> addSuit
 
 
+function buildDB(deck)
+
+    handCounts = dealAllHands(deck)
+    nHands = sum(values(handCounts))
+
+    prob = Float64[]
+    discard = discardType[]
+    playhand = NTuple{4, Int}[]
+    dealerplaycount = Int64[]
+    poneplaycount = Int64[]
+    dealerregret = Float64[]
+    poneregret = Float64[]
+    dealerprofile = Float64[]
+    poneprofile = Float64[]
+    dealerplayprob = Float64[]
+    poneplayprob = Float64[]
+
+    hRows = Dict{handType, NTuple{2, Int}}()
+    phRows = Dict{hType, Vector{Int}}()
+    allPH = Vector{hType}()
+    phID = Dict{hType, Int}()
+
+    n = 0
+    display("Building data structures...")
+    @showprogress 1 for h in keys(handCounts)
+
+        D = getDiscards(h)
+        nd = length(D)
+
+        hRows[h] = (n + 1, n + nd)
+
+        for d in D
+
+            push!(discard, d)
+            ph = getPlayHand(h, d)
+            push!(playhand, ph)
+            phc = counter(ph)
+            if phc in keys(phRows)
+                push!(phRows[phc], n+1)
+            else
+                phRows[phc] = [n+1]
+                push!(allPH, counter(ph))
+            end
+
+            push!(prob, handCounts[h] / nHands)
+            push!(dealerplaycount, 0)
+            push!(poneplaycount, 0)
+            push!(dealerregret, 0.0)
+            push!(poneregret, 0.0)
+            push!(dealerprofile, 1 / nd)
+            push!(poneprofile, 1 / nd)
+            push!(dealerplayprob, prob[end] * dealerprofile[end])
+            push!(poneplayprob, prob[end] * poneprofile[end])
+
+            n += 1
 
 
-
-function buildDB(hands, probs)
-    # nHands = length(hands);
-
-    handIndexDict = Dict{handType, Tuple{Int64, Int64}}()
-    playHandIndexDict = Dict{NTuple{4, Int64}, Int64}()
-
-    handProbabilities = []
-    discards = discardType[]
-    playHands = NTuple{4, Int64}[]
-    playCounts = Int64[]
-    marginRegrets = Float64[]
-    greedyRegrets = Float64[]
-    fastRegrets = Float64[]
-    marginProfile = Float64[]
-    greedyProfile = Float64[]
-    fastProfile = Float64[]
-
-    nRow = 1
-
-    for (nHand, hand) in enumerate(hands)
-
-        D = getDiscards(hand)
-        nDiscards = length(D)
-
-        handIndexDict[Tuple(Tuple.(hand))] = (nRow, nRow + nDiscards -1)
-
-        p = probs[nHand]
-
-        append!(handProbabilities, [p for d in D])
-        append!(discards, D)
-        pHands = [getPlayHand(hand, d) for d in D]
-        append!(playHands, pHands)
-        append!(playCounts, zeros(Int64, nDiscards))
-        append!(marginRegrets, zeros(Float64, nDiscards))
-        append!(greedyRegrets, zeros(Float64, nDiscards))
-        append!(fastRegrets, zeros(Float64, nDiscards))
-        append!(marginProfile, [1/nDiscards for d in D])
-        append!(greedyProfile, [1/nDiscards for d in D])
-        append!(fastProfile, [1/nDiscards for d in D])
-
-        for (ii, pHand) in enumerate(pHands)
-            playHandIndexDict[pHand] = nRow + ii - 1
         end
+    end
 
 
-        nRow += nDiscards    
+    db = DataFrame(prob=prob, discard=discard, playhand=playhand, 
+                   dealerplaycount=dealerplaycount, dealerregret=dealerregret, dealerprofile=dealerprofile, dealerplayprob=dealerplayprob, 
+                   poneplaycount=poneplaycount, poneregret=poneregret, poneprofile=poneprofile, poneplayprob=poneplayprob)
+
+
+    for (ii, phc) in enumerate(allPH)
+        phID[phc] = ii
+    end
+
+    phDealerProbs = Dict{hType, Float64}()
+    phPoneProbs = Dict{hType, Float64}()
+    for phc in allPH
+        phDealerProbs[phc] = sum(dealerplayprob[phRows[phc]])
+        phPoneProbs[phc] = phDealerProbs[phc]
+    end
+
+    return (db, hRows, phRows, phID, allPH, phDealerProbs, phPoneProbs)
+
+end
+
+function buildM(phID, allPH)
+
+    n = length(allPH)
+    M = Matrix{Union{FlatTree, Nothing}}(nothing, n, n)
+
+    @showprogress 1 for h1 in allPH
+        ph1 = countertovector(h1)
+        @floop for h2 in allPH
+            ph2 = countertovector(h2)
+
+            if any(values(counter(vcat(ph1, ph2))) .> 4)
+                continue   
+            end
+
+            i1 = phID[h1]
+            i2 = phID[h2]
+
+            ps = PlayState(2, [ph1, ph2], Int64[], Int64[], 0, 0, 0, [0,0], PlayState[], 0, 0)
+            solve!(ps)
+            mn = MinimalNode((), ())
+            minimize!(ps, mn)
+            ft = makeflat(mn)
+            M[i1, i2] = ft
+
+        end
+    end
+    
+    return M
+end
+
+
+function init_environment()
+
+    display("Building database... ")
+    (db, hRows, phRows, phID, allPH, phDealerProbs, phPoneProbs) = buildDB(standardDeck)
+    display("Precaching trees... ")
+    M = buildM(phID, allPH)
+
+
+    display("Serializing... ")
+    serialize("db.jls", db)
+    serialize("hRows.jls", hRows)
+    serialize("phDealerProbs.jls", phDealerProbs)
+    serialize("phPoneProbs.jls", phPoneProbs)
+    serialize("M.jls", tmap(packflat, M))
+    serialize("allPH.jls", allPH)
+    serialize("phID.jls", phID)
+    serialize("phRows.jls", phRows)
+    
+    display("Ready to train.")
+
+    ## This function is run-once. For training, many of these should load as const in global scope.
+    
+
+end
+
+
+function reset_environment()
+
+    db = deserialize("db.jls")
+    phDealerProbs = deserialize("phDealerProbs.jls")
+    phPoneProbs = deserialize("phPoneProbs.jls")
+
+    for R in values(hRows)
+
+        db[R[1]:R[2], :dealerplaycount] .= 0
+        db[R[1]:R[2], :poneplaycount] .= 0
+        db[R[1]:R[2], :dealerregret] .= 0.0
+        db[R[1]:R[2], :poneregret] .= 0.0
+        db[R[1]:R[2], :dealerprofile] .= 1 / (R[2] - R[1] + 1)
+        db[R[1]:R[2], :poneprofile] .= 1 / (R[2] - R[1] + 1)
+        db[R[1]:R[2], :dealerplayprob] .= db[R[1]:R[2], :prob] ./ (R[2] - R[1] + 1)
+        db[R[1]:R[2], :poneplayprob] .= db[R[1]:R[2], :prob] ./ (R[2] - R[1] + 1)
 
     end
 
-    df = DataFrame(handProbability = handProbabilities,
-                    discard = discards,
-                    playHand = playHands,
-                    playCountDealer = playCounts,
-                    marginRegretDealer = marginRegrets,
-                    greedyRegretDealer = greedyRegrets,
-                    fastRegretDealer = fastRegrets,
-                    marginProfileDealer = marginProfile,
-                    greedyProfileDealer = greedyProfile,
-                    fastProfileDealer = fastProfile,
-                    playCountPone = playCounts,
-                    marginRegretPone = marginRegrets,
-                    greedyRegretPone = greedyRegrets,
-                    fastRegretPone = fastRegrets,
-                    marginProfilePone = marginProfile,
-                    greedyProfilePone = greedyProfile,
-                    fastProfilePone = fastProfile)
+    for ph in allPH
+        phDealerProbs[ph] = sum(db[phRows[ph], :dealerplayprob])
+        phPoneProbs[ph] = sum(db[phRows[ph], :poneplayprob])
+    end
 
-    return (df, handIndexDict, playHandIndexDict)
+    serialize("db.jls", db)
+    serialize("phDealerProbs.jls", phDealerProbs)
+    serialize("phPoneProbs.jls", phPoneProbs)
+
 end
 
 
@@ -239,31 +277,22 @@ end
 
 
 function gettree(h1::hType, h2::hType)
-    return M[phID[h1], phID[h2]]
+    i1 = phID[h1]
+    i2 = phID[h2]
+    if !isnothing(M[i1, i2])
+        return M[i1, i2]
+    end
+    ps = PlayState(2, [countertovector(h1), countertovector(h2)], Int64[], Int64[], 0, 0, 0, [0,0], PlayState[], 0, 0)
+    solve!(ps)
+    mn = MinimalNode((), ())
+    minimize!(ps, mn)
+    ft =makeflat(mn)
+    M[i1, i2] = ft
+    return ft
 end
-
-
-
-
-
-# function gettree(h1::hType, h2::hType)
-#     i1 = phID[h1]
-#     i2 = phID[h2]
-#     if !isnothing(M[i1, i2])
-#         return M[i1, i2]
-#     end
-#     ps = PlayState(2, [countertovector(h1), countertovector(h2)], Int64[], Int64[], 0, 0, 0, [0,0], PlayState[], 0, 0)
-#     solve!(ps)
-#     mn = MinimalNode((), ())
-#     minimize!(ps, mn)
-#     ft =makeflat(mn)
-#     M[i1, i2] = ft
-#     return ft
-# end
 
 function saveM()
     serialize("M.jls", tmap(packflat, M))
-    GC.gc()
 end
 
 function loadM()
@@ -274,18 +303,6 @@ function Msize()
     return length([m for m in M if !isnothing(m)])
 end
 
-
-function saveprogress()
-    serialize("db.jls", db)
-    serialize("phDealerProbs.jls", phDealerProbs)
-    serialize("phPoneProbs.jls", phPoneProbs)
-end
-
-function loadprogress()
-    global db = deserialize("db.jls")
-    global phDealerProbs = deserialize("phDealerProbs.jls")
-    global phPoneProbs = deserialize("phPoneProbs.jls")
-end
 
 
 

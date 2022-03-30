@@ -272,11 +272,66 @@ Something I see I haven't mentioned yet in the changelog: I've moved to a local 
 
 3/18/22: Well, it's crashing again. This is really frustrating!!!
 
+
+3/19/22: Great news! Updating to Julia 1.7.2 gave me a stack trace instead of a crash. I was quickly able to trace the problem to an interaction with OneDrive sync. Before the last optimization, db was the first thing I deserialized, before the long preprocessing of M. After the optimization, db was the *last* thing deserialized (or nearly so, anyway). That seems to have caused the rash of new crashes. I have disabled OneDrive, and no crashes since! I can now enjoy this new speed -- or even more! Previously I was seeing that more threads -> more likely to crash. That should no longer be true. I think 80 deals / s should be an easy goal (and 100 may be possible). That's 6M / day running full time; more realistically 4M / day. Back on track to hit 100% coverage within the next day or two.
+
+
+3/20/22: Just kidding. I added a @sync block; maybe that will fix it. UPDATE: It did not. I'm reverting to my 1/13 commit. I like Julia, but hard crashes without introspection really sucks.
+
+
+3/21/22: Spring break is over. I did not make much progress due to this stupid crash. I have tried relocating the folder outside of the onedrive folder; maybe even when onedrive isn't running, the filesystem is still doing stuff with the files. I also moved the lock generation into train(), and I'm calling the locks when I serialize the backups. If this doesn't solve it, I may try the suggestion I received to put this on a (cloud) workstation with ECC memory and see if it happens there. Could also try right away to find a MWE, or just go ahead with a bayesian solver and plan for a complete re-write of the CFR shell around it.
+
+UPDATE: neither helped. If I want to try this on another machine, I will need to clean up the DB generation tools. And somehow NaNs have snuck back into the play probs, even after I added checks for all nonpositive regrets...
+
+Going with plan REWRITE AGAIN JESUS CHRIST but bayes this time
+
+
+3/22/22: Here's an idea that I really should have had a long time ago: I'm going to stand up an instance with a dramatically reduced deck size, and then once it succeeds I'll move to the full deck. Two suits is already only 26 cards; if I further reduce the # of ranks that would be a huge reduction in complexity.
+
+I will take the opportunity to further optimize hand play, including a hook for the bayesian update.
+
+
+
+3/26/22: OK, back at it. Have rewritten the naive play, calling it just play() bc it's gonna be the main thing. Anyway it runs in ~0.5 ms (for the reduced model with a 14-card deck). That bodes well. Speedups are entirely from reducing allocation; instead of copying trees over from M I'm just addressing it directly. In fact I eliminated ModelState entirely; each player's model is a single bitvector. Only the bare minimum of vectors are mutated during play() now. I'm going to rebuild the CFR infrastructure again before attacking bayes.
+
+Also found a way to stay out of db proper for much more of the CFR loop. Altogether, on the reduced deck size, CFR is ~5ms. That's 200 / sec, which is nice to see. Wonder if it will crash multithreaded??
+
+Yes, it will crash multithreaded. It crashed when i set it for 1000 batches of 1000 deals each. But it's running now on 100 batches @ 1000 each. ~3s per batch, meaning total throughput of more than 300 deals / sec. What an improvement! How much of this is from optimizations and how much from reducing the problem space, only time will tell. 
+
+Another 100 batches, looking like no problem. I've still got >40% GC time which is annoying. I'm betting I can still get excellent throughput on one thread. Going to try that next, before heading to bed.
+
+It's about 8s per 1000 single-threaded. So about 120 deals / s. Incredible! Performance is *definitely* not linear with # of threads; the 330 / s figure comes from 8 threads. I'm gonna leave it on one thread, and run it to a million deals in 100 batches of 10,000 each. Maybe single threading is my future? Through the first 12 batches, there appears to be a consistent slowdown from batch to batch. No way it's my fault here. Maybe there's a memory leak in one of the packages I'm using? In 12 batches it gained 6 seconds; that means it will be almost a full minute slower per batch by the time it finishes. Whatever is happening here is related to the crashes, I can smell it.
+
+
+
+3/27/22: NaNs are sneaking in somewhere. I only see them in the dealerprofile, and not the poneprofile, so it's gotta be an error in the code somewhere. But! Single threaded, none. SO it's in the multithreading. Maybe i misunderstand the lock mechanism?
+
+There *IS* still a weird slowdown effect as I do multiple batches, even fully single threaded.
+
+It does appear to be converging. And the slowdown may have stopped happening as I get closer to the optimal solution -- I suppose it may be related to the internal representation of initially homogeneous vectors in the dataframe. Anyway, it seems to work -- well enough that I can train the 14-card deck in an afternoon! (db has ~22,000 rows here)
+
+
+
+
+3/28/22: Made a couple other optimizations -- I'm preloading a false into the model bitvector when phPoneProbs or phDealerProbs is zero. (This happens a *lot* toward the end of training). I also added a Fold.collect() wrapper around the playresults vector. This gets *some* parrallelization -- and it has a bigger effect than I expected. Throughput on the 14-card test model is up to 300 deals / s. 
+
+I'm building the DB for the full model. Fingers crossed. If i'm anywhere *close* to the same speed, I'll be happy.
+
+
+
+3/29/22: It's 40 deals / s. That's where I was before with the crashes, but now no crashes, no corrupted database. 3M deals down, and who knows how many to go! Maybe 100M? Currently getting 3M / day means at least a month of training nonstop.
+
+Of course in the meantime I will keep looking for optimizations. Thought I had one today, when I created 'reusablemodels' in the train() scope, to share among the CFR (and later play) calls. But it affected allocations almost not at all, so all those allocations are happening somewhere else. I think tomorrow or the next day I will move the training REPL out of VSCode and into a standalone terminal, so I can keep working on optimizations. Currently allocating 4 TiB per 100,000 deals, which cannot possibly be optimal. That's 44MB per CFR() call; that's 1.5MB per play call. Surely that can be reduced by at least an order of magnitude -- what am I allocating in there???
+
+
+
 ******* TODO *******
 ********************
 
 
-TODO: Currently in optimalplay, advancestate(), and probably others, I am calling something like [ms.field for ms in model]. I think it would be faster to use a Tables.jl format, so I can access the model column-wise and just say model.field.
-STATUS: Low priority. naivesolve() is already pretty quick. If bayesiansolve() is on the edge of fast enough, it's worth looking at this optimization.
-UPDATE: When I put the probability stuff back into naiveplay(), it slowed down a lot. Bump that priority!
-UPDATE: There is a package called StructArrays.jl that may be a nice halfway fix for this, instead of going full Tables.jl.
+Move the M loading and saving to Folds.map
+
+
+Work in-place on updating db now that i'm using a new multithreading model and I don't have to lock it any more.
+
+

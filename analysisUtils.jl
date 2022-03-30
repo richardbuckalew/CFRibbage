@@ -35,7 +35,7 @@ end
 
 function dealcoverage_local(db)
 
-    N = length(keys(handID))
+    N = length(keys(hRows))
     ddeals = 0
     dmin = 99999
     dmax = 0
@@ -45,7 +45,7 @@ function dealcoverage_local(db)
     pmax = 0
     pcovered = 0
 
-    for (H, K) in handID
+    for (H, K) in hRows
         d = maximum(db.dealerplaycount[K[1]:K[2]])
         (d > dmax) && (dmax = d)
         (d < dmin) && (dmin = d)
@@ -74,18 +74,25 @@ function loadsnapshot(n::Int64)
 end
 
 
-function getdeltas()
+function getsnapshots()
 
     sn = Matrix(loadsnapshot(1))
-    D = []
-    for ii in 2:8
-        newsn = Matrix(loadsnapshot(ii))
-        push!(D, norm(newsn .- sn))
-        sn = newsn
+    D = Vector{Float64}[]
+    P = Vector{Float64}[]
+    ii = 1
+    while true
+        fn = "snapshot_" * string(ii) * ".jls"
+        if fn in readdir("snapshots")
+            x = deserialize("snapshots/" * fn)
+            push!(D, x[:,1])
+            push!(P, x[:,2])
+        else
+            break
+        end
+        ii += 1
+
     end
-
-
-    return D
+    return (D, P)
 
 end
 
@@ -93,14 +100,9 @@ end
 
 
 
+function savesnapshot(db)
 
-
-
-
-
-function savesnapshot()
-
-    (ddeals, dmin, dmax, dcoverage, pdeals, pmin, pmax, pcoverage) = dealcoverage_global()
+    (ddeals, dmin, dmax, dcoverage, pdeals, pmin, pmax, pcoverage) = dealcoverage_local(db)
     profilesnapshot = db[:, [:dealerprofile, :poneprofile]]
 
     n = 1
