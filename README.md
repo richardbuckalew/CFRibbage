@@ -9,6 +9,6 @@ This is a learning project in several ways:
 
 The end-result of this project will be a **database** (in a cross-platform format) plus a **solver** for playing optimally at all stages in a game of 2-player cribabge. 
 
-I think this is probably in an alpha state? Training is working at 40 core loops / s.
+I think this is probably in an alpha state? Training is working at several hundred hands per second.
 
 I welcome comments and ideas from interested strangers, but be nice -- this is a learning project 😬
