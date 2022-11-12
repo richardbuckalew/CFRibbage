@@ -1,0 +1,342 @@
+
+1/15/22: Core CFR loop complete (using optimal play-play, probably not correct). Runs in 3.5s.
+
+
+
+1/16/22: Moved all uses of canonical hands to arrays instead of tuples (canonicalize() saw something like a 100x speedup from this). ALSO got a new and very fast computer, to handle the larger database size. doCFR() (the full loop, using optimal play-play) now runs in 0.11s. Huge! This is probably fast enough for meaningful work. Still want to speed it up a lot; next plan is to precompute the play.
+
+
+
+1/18/22: Built playOutcomeMatrix overnight. Will speed up potential imperfect play algos. Current bottleneck though, is that solving the /second/ play is still as slow as the first, and doesn't benefit from an easy lookup table. Luckily, the ones after that are /much/ cheaper. Maybe alpha-beta can save this, but I doubt it -- ideally the entire CFR loop is less than 0.1s. If imperfect play is going to be required, then I need a new and clever idea.
+
+    - one potential route: maintain one tree throughout entire solve, and just update it? Naively you can just build the mega-tree that includes all possible hands based on each player's information, but that's gotta be way too huge. But maybe have a tree structure in place and change the *meaning* of each node, rather than rebuilding the tree, after each card is played? It should be possible to build a tree consisting of all possible /turn orders/ alone. The opponent's hand can be a linear combination (weights: probabilities) of all possible cards in that sorted position in the hand. This works because the # of cards in opp's hand is always known.
+    Q: Does perfect vs imperfect play solve affect optimal discard strat?
+
+    - 
+
+
+
+1/22/22: Rebuilt database using DataFrames. Made compatible with Arrow just in case.
+
+
+
+1/23/22: Rebuilt core loop: doCFR(). Updates all 3 strategy profiles. @btime doCFR() reports ~2ms. Cautiously optimistic. Need to do solveplay correctly, but it looks like with compilation this project is very, very doable. Accidentally ran about 30,000 hands just benchmarking. Holy shit.
+
+
+
+1/25/22: Improved tree building and scoring. Scoring all three methods is now as fast as scoring just margin used to be, PLUS: within the tree, all scores are calculated, rather than just at the leaves. I can use this to cache or precompute ALL play history scores (or just cache PlayNodes???). I *think* the new methods are compatible with doCFR() as written, just need to push them to main. 
+
+
+
+1/26/22: Realized that if there are 3 strategies (margin, greedy, and fast) then there are **9** pairings. Rather than continue to increase the complexity of the program, I resolve to TRAIN ONLY MARGIN vs MARGIN. After that project is successful, and using lessons learned, I can then adapt the code for the rest of the pairings, if I want.
+Also: realized how to precompute play hands. Push hand info to the nodes. When building the tree, have build! return the minmax value of its children and the play that leads to that value. Store that value in the parent (after the parent calls build! on its children). Cache the trio: (myHand, playHistory, outcome) using some scheme. (Maybe a sparse 3-D matrix).
+--> occasionally seeing weird values in node.outcome -- but never at the root. something funky with propagation.
+
+
+
+1/27/22: Fixed the scoring and propagating errors. Set up pre-caching. It's not going to fit in memory -- used 6GB on 2% of the calculation. Shit. Must solve in realtime, no way around it. OTOH, solved the scoring and propagation errors, and got the complete solve down to < 1ms. Best idea now is to build all possible trees right at the start, then use those same trees the rest of the play. probably about 2s per solve, per core. Don't love it.
+
+
+
+1/28/22: Having finished the "complete information" solver, I realize that that's never going to be what I need. I need to include the uncertainty within the tree. At least now I'll have something very concrete that I can optimize.
+
+
+
+1/29/22: I have written an incomplete information solver. It is far too slow. Far, far, far too slow. Either there's a cool trick I haven't though of or this won't work.
+
+
+
+1/30/22: Still holding onto hope for optimizing. Now there appears to be a memory leak though. Goal for tonight is to get the core loop complete, and then work on the play solver over time. Also need to recompute all complete info plays.
+Core loop is working. Perfect play matrix is constructed and implemented in doCFR(), which takes about 700us per loop. If I decide that perfect play is the only option, then we're at ~1000 iterations per second, which is fast enough to go. In that case, I would just need to wrap the loop in some periodic backup logic and let it rip.
+Logistics: Moved the play solve stuff into playUtils.jl. It was time. Three source files now, and probably that's enough. It was weird having scratch AND superscratch, need to get back to doing it right.
+
+
+
+1/31/22: New idea is CFR on the play as well. I think it will be "Chance-sampling" as mentioned in the monte carlo paper. If it's fast enough, I'll do the whole solve the first time I see the pair. Unlikely to be fast enough. More likely, I train once each cycle. As the discard profile converges, I'll see the relevant play trees more often, and the irrelevant ones less. I could even add a knob to do more play training as the discard profile converges? Anyway, I need to figure out if the information states will fit in memory. 
+An Information Set includes all the information one player has at any given moment, specifically about what the other player's hand is. Two situations are in the same IS if: they are indistinguishable to the player. So each possible play history, combined with the other player's knowledge of their own hand, the turn card(, and the cards played so far -- all that really matters is the play history, right?).
+Back-of-the-envelope suggests there are ~150M play histories? Times the number of 7-card rank hands. That's huge. But there's a ton of overlap there. So... maybe?
+
+
+
+2/2/22: After some thought, and some back-of-the-envelope calculations, I have ruled out the following: Using perfect play (no guarantee of convergence); Doing a full conditional solve every deal (too slow); Using CFR on the play (not enough storage). Conclusion: do a partial solve with incomplete info, taking a sample of possible hands rather than solving against all of them. This can be tunable by a dynamic parameter.
+Have written the sampling imperfect info play solver. taking 3 samples at every depth takes about 8 seconds. Consider dynamic sampling? Ideally we're sampling a lot more than 3! But at a depth of around 11, a branching factor of 3 is still very large. Currently doing a random sample; maybe should do the n most likely hands as well. At any rate, I have an imperfect solver that works!! NB: Each increase by one in the number of samples is about a 7x time increase, so far. yuk.
+
+
+
+2/3/22: trying to optimize the imperfect solver.
+Current ideas: 
+  -  Add dynamic sampling. This is only useful if I can get more 'accurate' results in the same time -- This is not really performance tuning at all.
+  -  I keep forgetting about alpha-beta
+If I can remove the GC calls, I can get a 25% speedup right away. That might be the best possible with this algorithm though, and that's still ~3s per matchup with a constant branch factor of 3.
+It's worth considering what the perfect solver counterpart would look like. How many counterfactual branches can I squeeze into the perfect solver? 
+Pruning potential hands looked promising but got very slow with the need to delete one card from each hand. Instead, moving to SVectors for potentialhands and trimming the ends to get playhands.
+
+In the meantime, I wrote a hybrid solver: it uses the perfect solver to calculate the expected value of each candidate play against all potential opponent hands. It runs in about 1s (without alpha-beta). This is probably the sweet spot? I'll have to find a convincing argument that this will still converge to an equilibrium, but it feels like it will. Everything hinges on how much the uncertainty affects actual play.
+
+Note: I tried removing the deepcopy calls. Mostly it's not faster without them. The one exception is that i switched to filtering for new potential hands, rather than generating them from scratch. This *is* faster. I also tried moving to StaticArrays where possible; this proved to be a real headache. I might try again in the future, but there are a lot of dumb corners where it was very inconvenient.
+
+I think my next goal should be moving to github, and then adding some convenience functions for tree traversal, db inspection, and so on. I want to sleep for a couple nights on whether a hybrid solver is good enough. If it is, then it's close to go time.
+
+
+2/4/22: Created a repository on Github.
+
+
+2/5/22: I think I've got a winner. I will precompute the entire tree for every play. If I only save the nodes where a genuine choice must be made (i.e., once both players are down to 1 card or fewer, don't save) then it should easily fit in memory. Then, no solving needs to happen in real time. Players can refer to the matrix of all possible play states to compute expected values and impute hand probabilities. The math will be more complicated, but I think it should still end up being much faster. This is all based on a back-of-the-enveleope calculation that each hand matchup should need around 288 nodes each (4x4x3x3x2). There are 3M of them, so that's about 1B nodes. If I use Int8s and only save the bare minimum, each node will need a vector of plays and vector of resulting values. On average there will be about 3 of each, so 6x8 bytes = 48 bytes per node (+ overhead, call it 100 bytes pessimistically). That's 100B bytes... still too much maybe. I'm gonna try implementing it and start counting bytes.
+UPDATE: I correctly predicted node size: About 44B each. I was underestimating the number of nodes though; on average it seems to be in the high hundreds or maybe even low thousands. summarysize is about 50kB per tree. Times 3M trees is 150GB. Still too big. But close!
+UPDATE: By only saving nodes where both players have meaningful choices, I can reduce this further to about 20kB. 60GB.
+New idea: Only precompute nodes with 3 meaningful choices. If both hands are size 2 or smaller, do it live. Precaching averages under 10kB per tree, i.e. 30GB, which would fit in memory. How fast is live solving from 2? With 2 cards each, @benchmark makes it ~5 microseconds. I could probably optimize the solver further too. 
+
+I have precached all plays for hands with 4 or 3 cards. The data is in perfectSolveMatrix.jls, serialized as an 1820x1820 matrix of Union{Nothing, SummaryNode}. It's time to build the solver.
+
+aaaaaand serialization is too slow. I have no idea why but it's just not practical. Maybe a different storage format?
+
+At any rate, I can build the solver and just build the trees from scratch for now, and work on the storage issue later. It took about 3 hours to generate the trees, so I can do that some night whenever I'd like.
+
+
+
+2/8/22: A couple days away from the project. I'm confident that a bayesian update is a sound approach. It requires building a *lot* of potential hand lists, so I've been thinking about how to make that more efficient. The answer is in two parts: 1) filtering and 2) counters. I've played with using counters for playhands before, but combining them with filtering gets building a fresh list of potential hands down to ~20 microseconds. So as I build the bayesian solver, I will be assuming all play hands are counters.
+
+I've also been thinking about the problem with trees, and specifically serializing them. I think instead I should consider a custom struct that implements a children dict. Each node gets an id, etc., matlab-style. And then each node can be a simple dict, mapping the play to the value.
+
+UPDATE: dicts ended up having too much overhead. The solution (in the next update) was tuples, and relying on stable ordering.
+
+
+
+2/12/22: I've got a data structure (MinimalNode) that should allow me to fit all trees in memory, including all nontrivial decision points (!). Each tree is on the order of 10kB. There are 2~3M trees, so in all that should be about 30GB. There's something weird happening with tmap when I try to generate it all at once, so instead I'm caching with gettree(). When I poll M for a tree that's not there, I generate it and store it in M. I'll serialize M at the end of each session, so it'll get built up over time. As a fun aside, I played with several different hare-brained compression schemes, including conversion to string (which is really really really efficient, storage-wise, but really really slow).
+
+I've also got optimalplay working. Pass a list of candidates, a list of MinimalNodes ** UPDATE: FlatTrees now **, and a list of probabilities, and it returns the play from candidates that has the highest expected value. It's pretty delicate; MinimalNode has *nothing* extra -- it's literally just a tuple of values and a tuple of MinimalNodes (its children) ** UPDATE: FlatTree has even less structure! **. In the actual bayesian solver, we'll need to trim every tree to a list of the correct MinimalNode corresponding to the play made from candidates. ** UPDATE: see advancetree() *** UPDATE AGAIN: moving to a separate list of pointers *** This will rely on candidates always being in the same order as they were when the MinimalNode was constructed. To enforce this, I'm sorting hands a lot, **especially** after calling countertovector().
+
+Together with the much faster filterpotentialhands(), a bayesian solver is shaping up to be actually fast!!! (once M is populated, anyway...)
+
+** By the way: The Indexing scheme for M is always (p1, p2) **
+
+OH NO: After just today's session, serializing M is sooooo slooooooow (30s for 21k trees). I've posted a question on Julia Discourse.
+If that doesn't work, I can compress trees into strings, and then compress with string compression libs for storage. I'm afraid the conversions and compressions are going to be too slow too though...
+
+
+
+2/13/22: Serialization is a no-go. One option is to write a custom serialize() function -- but it's not documented or even commented, so that would be a pain in the ass. Instead I have written a custom compressor, turning a MinimalNode tree into a flat vector and back again. The vectors should be faster to serialize. flattennode() and expandnode() appear to be inverse to each other. Flattening and Serializing is much much faster. Deserializing is faster too, but not as much. This is OK, and can be optimized later. I have added a loadM() and saveM() to dbUtils to transparently convert and (de)serialize M. Ready to rock!!!
+
+Began writing the full solver. Ran out of steam around 9pm after writing the cases with no trivial choices (length(candidates) < 2). Hopefully it's mostly bug-free; can't test that stuff til I do the meat. It's gonna be so slow at first, since I will be building so many trees. But I believe.
+
+
+
+2/17/22: Missed a couple days' recording in the changelog, but I've also missed a couple days for garage stuff. I've moved to FlatTree for my tree structure. Along with advancetree() it's just as good as an actual tree in about half the size. Unfortunately, although it's faster to serialize I'm now running into issues with size on disk. In memory, all trees (3.27M of them) are something like 30GB. But I canceled the thread after serialization was up over 60GB on disk. I suspect serialize() is converting all my Int8s and Int16s into Int64s (or maybe Int32s?) for serialization. Possibilities: Find a format that natively writes Int8s, or write a custom serializer to pack 8 Int8s into each 8-byte word. ** UPDATE: I was trying jld2, which I think upconverts all Int8s to Int64s. Serialize works correctly **
+
+In the meantime, I'm writing the bayesian updater. It's very slow :( :( :( Looking like 10 minutes for one update -- not surprising once I see it written out, though. For each of the ~1800 potential hands, I'm looking at ~5000 potential deals and doing nontrivial work on each one. 9M calls is going to take a while, unfortunately. Possibilities: random sampling of potential deals. I've just added that (taking a sample of 100), and it sped up nicely -- and appears to have worked!!! the resulting updated probability vector *does* sum to (very nearly) 1, and is pretty sparse, indicating that we're ruling out a large number of hands. This will allow a pruning step after the probabilities are updated, where we can rule out (apparently many) hands which are otherwise technically possible.
+
+I'm calling this a qualified success. It still took about 10s just to run the updater. Something that is rather strange is, at least for this test set, almost all of the nonzero probabilities after the update are just a final segment of the vector (there's one stray toward the middle). What's that about?
+
+Update: in optimalplay, i'm finding that the length of the values tuple isn't always matching the length of the candidates passed in. Question for when I'm ready to focus again: should all the value tuples for all the model trees be the same length? (Yes, right? At least for a given potentialhand? So why aren't they?) OK, enough for now, starting to get foggy. Hopefully this bug yields easily tomorrow.
+
+
+
+
+2/18/22 (morning): As hoped, I figured out the problem overnight. I don't want to advancetrees() for the last card in history because that's the play i'm considering; from the point of view of the trees it hasn't happened yet.
+Note: First run is really really slow until M is filled. Once I get the solver working, I've GOT to figure out how to speed up serialization.
+Note: A single update (with only a 40-pdi sample) touches around 800,000 trees. It took about 20 minutes on first run to build & evaluate. Once the trees are loaded into M, the 40-pdi sample takes 6s.
+
+Note: M takes about 4GB in memory, and about 3GB on disk, using serialize. Using JLD2, the size ballooned -- probably JLD2 doesn't respect Int8s. A custom serializer for FlatTree, that flattens all the Tuples too, down to a single vector of Int8s, should be even faster and more compact.
+
+IDEA: Just as I'm already doing with the model probs, I could skip the PDI sampling entirely -- don't include the discard info when filtering the model; just use the full model once at the beginning. WIll save loads of time I'm sure. How closely will it match the full analysis?
+
+IDEA: when pulling PDIs, completely skip ones with approx. zero probability. There's no need to build trees, filter, etc., for a deal that is guaranteed to contribute 0.0 to P_ch.
+
+UPDATE: Idea 1 was a bust. The result was too many potential hands getting culled -- including, in at least one test case, the actual hand that the opponent had. It's ok if we're a little sloppy, but that's a bright line that definitely can't be crossed. Idea 2 was easy enough to add, but its benefits are theoretical right now -- I haven't written a solver that gets past the first iteration yet xD
+
+
+
+2/18/22 (afternoon): Implemented offsets into FlatTree. Implemented FlatPack for more efficient serialization of FlatTrees. Even with the overhead of packflat() and unpackflat(), saving and loading M is faster than straight serialization.
+
+Considering that the renormalization approach might be best for the conditional solver. Since the probabilities are at all times based on the db strategies (just not updated during play), it should still converge... to *something*. I have no idea whether it converges to an epsilon-solution though. Nor do I know if I could prove it either way...
+
+
+
+2/19: saving and loading M is reasonably fast now -- I didn't time it but with 810k trees it was around a minute or two. Hooray! The weird situation I noticed on 2/17 with the final segment of the vector is no longer happening. updateprobabilities looks like it's working correctly, just a bit slowly. Gotta speed it up.
+
+Wrote fastupdateprobabilities, which skips deal sampling and works only with the 4 cards in the possible playhand. It is filtering *a lot* -- like, 441 -> 3. Much more than the slow one. Don't know if it's a bug or just a consequence of this approach. It sure is fast though... If updateprobabilities is returning zero probability for the actual hand the opponent has, it's out. And it is. updateprobabilities() doesn't have the problem, so i guess i need to optimize it instead.
+
+Other option: Solve naively; never update probabilities except to renormalize them when hands are taken off the potentials list.
+
+
+2/19/22 (evening): Wrote a naive solver. Having some issues with advancing the FlatTrees in opponent's potentialhands. Sometimes it works, and sometimes it doesn't, and I don't know why. It doesn't help that FlatTrees have zero context coming along with them to help. But there's no doubt that when I build a FlatTree, the output from advancetree(ft, ci) corresponds correctly to the output of MinimalNode.childnodes[ci], for every instance that I've cared to check. Which means one of two things is happening: 1) The wrong trees are in potentialtrees[3-owner], or 2) they're being advanced incorrectly.
+
+I'm thinking I ought to get rid of the recursive solver entirely -- for this solution method, where the optimal play is calculated not by recursive calls but instead by calls to optimalplay, the solution is not built from a tree but rather a path (i.e., successor replaces children). I could wrap the struct up inside a function, run a while-loop, and achieve the same effect, with significantly less GC involvement. Also less typing overhead. That's my plan for next session.
+
+
+
+2/22/22: I believe the bugs are gone from naivesolve(). Now I believe I've found a bug in makeflat(), which comes up when a MinimalNode has childvalues but no childnodes. I'll sort it out tomorrow probably.
+UPDATE: I may have sorted it already. Found a new bug in naivesolve, where I'm trying to advance trees at the end of the line!
+UPDATE: Sorted! naivesolve() seems to be working!!! Finishing the night with a @btime: 447 ms. That's doable already!!
+In the meantime, I'm thinking that it may be more performant to add a counter to FlatTree, and make it mutable. This will avoid a lot of garbage collection, as I am collecting and reallocating every single tree every single step with advancetree().
+
+
+2/25/22: Stuck at work for the afternoon. Can't do any real work (this awful computer...) but I am cleaning up the files / moving things around / removing semicolons etc. It did occur to me previously to use a vector of counters instead of modifying the FlatTree struct. The counters can come along for the ride just like the probs, etc. Then I won't have to do as much GC when I'm replacing all the trees with their advanced versions, but I also don't have to make FlatTrees mutable.
+
+Another performance thought: getPossibleHandIndices is probably much slower than getPossibleHands because it uses findall instead of filter. I need to find a way to avoid that; the problem is if I filter just opphands then I have no way to match trees and probs. Perhaps I need a struct to represent those, say a Model? Added to the TODOs.
+
+
+
+2/26/22: Feeling dumb, have been staring at a very stupid bug for a very long time (with the move to ModelState, the FlatTree advance mechanism is different; tree.links now represents offsets as opposed to absolute indices). With that solved, I have updated naiveplay() according to the last TODO, and... it worked like a charm. naiveplay() is now benchmarking at around 4.5 ms. It occurs to me that I forgot to write optimalplay... 1 sec. OK fixed it, now it benchmarks at 4.5ms. N I C E
+
+The question now is: should I still write a bayesian solver? Or is this good? I could declare victory, finish building the infrastructure, and let CFRibbage CFRip. The answer has to be no, I think. I have to at least *try* the bayesian solver. It's possible that the move to ModelState it speeds up enough. Unlikely.
+
+Either way, I will deliver (myself) a minimal working product.
+
+I went ahead and messed with doCFR() a little. There's going to be some work to do there, but maybe not too much. Actually -- it looks like it works for seed!(12345). 
+**** But there's an issue with tree advancement for a random deal. :( :( ****
+
+Went ahead and benchmarked doCFR() on the known seed anyway, just to see. 205 ms, so 5 per s. The CFR overhead is real! Maybe the bayesian solver should be back-burnered for now. It's transparent to doCFR() anyway.
+
+
+
+2/27/22: Every great once in a while, testnaive() throws an advancestate!() error. It looks like it was from advancing the tree when it was redundant -- when all future nodes are guaranteed to have one or fewer candidates. I added checks around all the advancestate!() calls, and that seems to have fixed it.
+
+Next up: infrastructure / optimization around doCFR(). Time to think about how to actually run the solver, keep backups, etc.
+
+I had previously neglected to pull initial probabilities from the database in naivesolve(). I've fixed that now, and identified an inefficiency in the database in so doing (db.probability was stored as a vector of Any for some reason). Now dot() doesn't need to promote/convert. This is a huge slowdown and will need a lot of work. I need to learn a bit more about DataFrames too; switching everything I could in naiveplay and doCFR to views gave a 5x speedup. doCFR() sits at ~7s. I wonder if it would be faster to store the prob products right in db?
+UPDATE: using Profile.@profile, I'm seeing that the compiler is involved every time, even with the same random seed. I think I'm profiling wrong. The current doCFR(), involving the random deal and processing of the hands, should probably be testCFR().
+
+Afternoon: storing the play probabilities in db gives another 2x speedup, to about 3.5s. On 6 cores, that's around 2 deals / s. 6 days to reach 1,000,000 deals at that rate. My goal is something like 100,000,000 deals min, so that would be 2 years of computation. Keep working!
+IDEA: if we have zeros in poneplayprob, we can ignore that model state!! Added to naiveplay. It won't pay off until much later, but I'll be glad i did it.
+
+so testnaive() clocks in at 120ms. One round of CFR involves ~30 plays. There's a little overhead from doCFR() itself but every ms I shave off of testnaive() translates to 30ms in doCFR(). setinitialprobs!() is by far the slowest step.
+
+By precalculating the probability of each play hand in a separate dict (phDealerProbs or phPoneProbs), I have gotten about a 20x speedup. doCFR() takes about 0.25s now. Across 6 cores, that's 24/s. We're down to two months of calculation to hit 100,000,000 deals. This time, for real: Next up, infrastructure! What's needed:
+  - multiprocessing. Learn about locks!
+  - logging.
+  - periodic backups.
+  - analysis tools.
+The first three are higher priority than the last, since I can write those while CFRibbage thinks in the background.
+
+
+
+3/3/22: No time this week to work :( Today I added multithreading. I'm using ReentrantLock() and I'm being pretty liberal with it. I have one for each struct that I write to. The big ones are obviously going to be db and M; I'm only using about half my processing power right now (6 threads should reach 50% utilization, i'm down around 20%). Both of these structures are huge, and I'm only working on a small part of db at any one time. M is a little different; I'm usually generating tens of thousands of trees at a time -- but then, eventually I won't be generating any at all. 
+SOLUTION 1: pre-fill M. It's time??? Then I don't have to worry about locks on it.
+SOLUTION 2: Make a custom lock, using Threads.Condition: only lock if another thread is currently using the same rows as you. Or (maybe?) even easier, just do the deals ahead of time, and make sure no two threads have the same hand at any time. Maybe @spawn is the right move here, instead of @threads.
+At any rate, it works. But the performance is not there yet. After resetting db, multiCFR() is taking ~90s to do 100 deals -- that's not much better than single thread (107s). But this is an astonishing amount of GC time... 87%. Not sure why. I'm getting rid of the locks for now, and will prefill M. M's going to fill up at some point anyway. May as well do it now and get rid of what I'm guessing is the limiting lock. So for now I'm filling M and I'll come back to this later (probably this weekend).
+UPDATE: M filled and it takes 4.5 min to serialize. That's not bad. It's 13GB on disk, which is pretty close to how big it is in memory, too!
+UPDATE: holy shit, doCFR() is showing 92% gc time now (at 3.2s, so actual time still 0.25s if I can fix the gc issue). This is my first regression, didn't revert the locking code correctly I guess. naiveplay() is still fast, no GC to speak of.
+
+
+
+3/4/22: Reversion mostly fixed the problem. I don't know what the problem *was* exactly, but it's mostly fixed. Now doCFR() shows 25% GC time (out of 0.4s, so there's room for improvement). @btime puts it at 0.33s. "The Internet" suggests that GC times don't necessarily correspond to actually collection, but rather with heap size as the GC traverses the heap *looking* for garbage. It seems possible that I've inadvertently increased the size of the heap? With M filled, I should be able to avoid data races by distributing the threads carefully. 
+TIMING: loading the full M takes 870s ~ 14.5 min. Could be worse. Could probably be better with more cores too. My compactification was very effective; with everything loaded (and chrome etc. still running) I'm sitting at 21GB RAM in use. Julia reports needing 14.5GB. That's very good!! It feels great to remove the Random.seed!() call at the beginning of my test functions too.
+
+Some optimization this morning; cut the # of allocations significantly. Down to 0.25s per doCFR(). Gotta switch modes and prep for class now, back to it this weekend with the intelligent threading implementation.
+
+OK, I couldn't stop working on it in the shower! I've eliminated the calls to deepcopy(), the last major speedbump. doCFR() now takes about 0.16s. But there's a rare bug where the number of play hands isn't matching the number of show hands in doCFR(). That's a weird one! UPDATE: solved. swapped dealer and pone in one key line of doCFR().
+
+Afternoon: returned to the multithreading, but did it correctly this time with threadedCFR() and threadednaiveplay(). Using @threads, I'm getting full CPU utilization. (!!!) @btime on testthread, which uses @threads to run 100 deals, gives 5.1s. That's 20 / s (on 6 cores). 4 weeks of training ==> 40,000,000 deals. IOW, 10,000,000 deals per week, more than 1,000,000 deals per day.
+
+
+
+3/5/22: Multithreading + simple logging is working. At 50% cpu, I can run about 16 hands per second, which translates to around 1,000,000 per day. Saving results as a vector of OrderedDicts in results.jls. Each day I will manually back up the results logs to keep them from getting unwieldy. This is exciting!
+
+
+3/6/22: I have been training for a while now. I've got 300k good deals in, and everything looks like it's working correctly -- *sort of*. Occasionally julia crashes with a memory access error (code 0xc0000005). I tried a couple things to maybe fix that, like doing more, smaller batches, and so far I haven't seen another crash. But I *am* seeing that batches take longer over time. The only structure that should be growing is results, and it only grows by 10,000 dicts each batch -- meanwhile the batch time increases by 10s per. It's possible this is only due to the growth of results. I think I will consider pre-allocating in the future. In the meantime, training continues.
+
+
+
+3/7/22: Training continues. The weird crashes have disappeared but the slowdown is still happening. I hit the first million deals, which I saved as results_1.jls in the results archive folder. Some ideas I have for the future:
+ - parse results as json for storage / analysis
+ - preallocate all the play solve data structures in dobatch, and reuse them across all the plays within a given thread. This should (?) reduce GC.
+
+
+3/11/22: Spring Break! Woo! Time to finally do the things I've been thinking about all week.
+First: Just finished moving to the bitvector version of naiveplay(). threadedCFR() is now 90ms per deal. BIG WHOOP!!
+
+
+
+3/12/22: The slowdown, while still present, is much much smaller. And random crashes seem to be gone. Full-time training is 3M deals per day. Time to write some software to check convergence!
+
+
+
+3/13/22: Just kidding! When I tried to run a third batch yesterday, first there was a 30% slowdown on one group of 10,000, and then a crash. The next run crashed immediately. My gut is telling me it's the results vector; 2M json strings is a lot. Anyway, that data was speculative, and if I stop saving it that's one fewer lock slowing things down. Probably the correct thing to do is a mmap'ed database on disk. But I don't *need* that data anyway, so I'm gonna see if omitting it fixes anything.
+
+Before I set the training to run again, I'm going to build a (very) simple analysis suite so I can get some idea of progress. My back-of-the-envelope was 40M deals to get something that could reasonably be called a 'solution' (i.e., an epsilon-solution, but probably for a fairly large epsilon). Something simple like an L_inf norm will be a good sanity check on that. To that end: Added a new file to the repo. analysisUtils.jl
+
+Training back on track; no crashes since removing results. On 6 cores, about 45% cpu utilization and about 35 deals/s. Also no more slowdowns; seems my gut may have been correct. Saving a snapshot every 1000000 deals.
+
+A bayesian play solver still nags at the back of my mind. The best case scenario would be to fnish training, or at least come close, write the bayesian solver, and see that it gives the same play strategies as the naive solver. If it doesn't, then I can switch solvers partway through -- this is just a question of initial condition after all, so why privilege the uniform I.C.? OTOH, the naive solver may be taking us to a local minimum, so we'll see.
+
+Something I see I haven't mentioned yet in the changelog: I've moved to a local git installation. I'm taking this seriously as a portfolio project, even though it's a solo and it started out with my ideosyncracies. There's going to continue to be a lot of work to do, especially on the eventual Javascript front-end, so I'm comfortable with a slower transition to a more industry-standard workflow in the meantime. That also means writing tests and documentation. At a training rate of ~2M deals per day, it's going to be a month before I have a solution. That leaves plenty of time to do these other things -- especially if I can get the training to run in powershell rather than thru vscode; then I can develop and train at the same time. Unfortunately, moving to a command-line instantiation seems to have precipitated the crashing previously, so I hesitate to try it. If there comes a point when I'm not busy otherwise, I'll get to it.
+
+
+
+3/15/22: Still training, going great. No more crashes, no more slowdowns. Been able to do other things and still feel productive vis-a-vis cribbage. After 7M deals, we have coverage of 99.45%. We expect 100% coverage at around 13M deals.
+
+
+
+3/17/22: It occurred to me that having db, phPoneProbs, and phDealerProbs be global was for convenience, as I was developing the individual pieces of code that dealt with them. I spent an hour wrapping them inside a function call ( train() ) and avhieved a modest 10% speedup. Training continues at ~40 deals/sec. Should hit 100% coverage today or tomorrow.
+
+3/18/22: Well, it's crashing again. This is really frustrating!!!
+
+
+3/19/22: Great news! Updating to Julia 1.7.2 gave me a stack trace instead of a crash. I was quickly able to trace the problem to an interaction with OneDrive sync. Before the last optimization, db was the first thing I deserialized, before the long preprocessing of M. After the optimization, db was the *last* thing deserialized (or nearly so, anyway). That seems to have caused the rash of new crashes. I have disabled OneDrive, and no crashes since! I can now enjoy this new speed -- or even more! Previously I was seeing that more threads -> more likely to crash. That should no longer be true. I think 80 deals / s should be an easy goal (and 100 may be possible). That's 6M / day running full time; more realistically 4M / day. Back on track to hit 100% coverage within the next day or two.
+
+
+3/20/22: Just kidding. I added a @sync block; maybe that will fix it. UPDATE: It did not. I'm reverting to my 1/13 commit. I like Julia, but hard crashes without introspection really sucks.
+
+
+3/21/22: Spring break is over. I did not make much progress due to this stupid crash. I have tried relocating the folder outside of the onedrive folder; maybe even when onedrive isn't running, the filesystem is still doing stuff with the files. I also moved the lock generation into train(), and I'm calling the locks when I serialize the backups. If this doesn't solve it, I may try the suggestion I received to put this on a (cloud) workstation with ECC memory and see if it happens there. Could also try right away to find a MWE, or just go ahead with a bayesian solver and plan for a complete re-write of the CFR shell around it.
+
+UPDATE: neither helped. If I want to try this on another machine, I will need to clean up the DB generation tools. And somehow NaNs have snuck back into the play probs, even after I added checks for all nonpositive regrets...
+
+Going with plan REWRITE AGAIN JESUS CHRIST but bayes this time
+
+
+3/22/22: Here's an idea that I really should have had a long time ago: I'm going to stand up an instance with a dramatically reduced deck size, and then once it succeeds I'll move to the full deck. Two suits is already only 26 cards; if I further reduce the # of ranks that would be a huge reduction in complexity.
+
+I will take the opportunity to further optimize hand play, including a hook for the bayesian update.
+
+
+
+3/26/22: OK, back at it. Have rewritten the naive play, calling it just play() bc it's gonna be the main thing. Anyway it runs in ~0.5 ms (for the reduced model with a 14-card deck). That bodes well. Speedups are entirely from reducing allocation; instead of copying trees over from M I'm just addressing it directly. In fact I eliminated ModelState entirely; each player's model is a single bitvector. Only the bare minimum of vectors are mutated during play() now. I'm going to rebuild the CFR infrastructure again before attacking bayes.
+
+Also found a way to stay out of db proper for much more of the CFR loop. Altogether, on the reduced deck size, CFR is ~5ms. That's 200 / sec, which is nice to see. Wonder if it will crash multithreaded??
+
+Yes, it will crash multithreaded. It crashed when i set it for 1000 batches of 1000 deals each. But it's running now on 100 batches @ 1000 each. ~3s per batch, meaning total throughput of more than 300 deals / sec. What an improvement! How much of this is from optimizations and how much from reducing the problem space, only time will tell. 
+
+Another 100 batches, looking like no problem. I've still got >40% GC time which is annoying. I'm betting I can still get excellent throughput on one thread. Going to try that next, before heading to bed.
+
+It's about 8s per 1000 single-threaded. So about 120 deals / s. Incredible! Performance is *definitely* not linear with # of threads; the 330 / s figure comes from 8 threads. I'm gonna leave it on one thread, and run it to a million deals in 100 batches of 10,000 each. Maybe single threading is my future? Through the first 12 batches, there appears to be a consistent slowdown from batch to batch. No way it's my fault here. Maybe there's a memory leak in one of the packages I'm using? In 12 batches it gained 6 seconds; that means it will be almost a full minute slower per batch by the time it finishes. Whatever is happening here is related to the crashes, I can smell it.
+
+
+
+3/27/22: NaNs are sneaking in somewhere. I only see them in the dealerprofile, and not the poneprofile, so it's gotta be an error in the code somewhere. But! Single threaded, none. SO it's in the multithreading. Maybe i misunderstand the lock mechanism?
+
+There *IS* still a weird slowdown effect as I do multiple batches, even fully single threaded.
+
+It does appear to be converging. And the slowdown may have stopped happening as I get closer to the optimal solution -- I suppose it may be related to the internal representation of initially homogeneous vectors in the dataframe. Anyway, it seems to work -- well enough that I can train the 14-card deck in an afternoon! (db has ~22,000 rows here)
+
+
+
+
+3/28/22: Made a couple other optimizations -- I'm preloading a false into the model bitvector when phPoneProbs or phDealerProbs is zero. (This happens a *lot* toward the end of training). I also added a Fold.collect() wrapper around the playresults vector. This gets *some* parrallelization -- and it has a bigger effect than I expected. Throughput on the 14-card test model is up to 300 deals / s. 
+
+I'm building the DB for the full model. Fingers crossed. If i'm anywhere *close* to the same speed, I'll be happy.
+
+
+
+3/29/22: It's 40 deals / s. That's where I was before with the crashes, but now no crashes, no corrupted database. 3M deals down, and who knows how many to go! Maybe 100M? Currently getting 3M / day means at least a month of training nonstop.
+
+Of course in the meantime I will keep looking for optimizations. Thought I had one today, when I created 'reusablemodels' in the train() scope, to share among the CFR (and later play) calls. But it affected allocations almost not at all, so all those allocations are happening somewhere else. I think tomorrow or the next day I will move the training REPL out of VSCode and into a standalone terminal, so I can keep working on optimizations. Currently allocating 4 TiB per 100,000 deals, which cannot possibly be optimal. That's 44MB per CFR() call; that's 1.5MB per play call. Surely that can be reduced by at least an order of magnitude -- what am I allocating in there???
+
+
+
+3/30/22 (morning): Looks like i'll juuuuust miss the end of overnight training before I leave for work today. Something new that I didn't see before: it's actually speeding up batch-to-batch! # of allocations across this 20-batch session went from 72.25G to 72.15G, and time from 2420s to 2396s. This is a pleasant surprise.
+
+3/30/22 (afternoon): In between batches, I decided to clock those numbers a little more closely, and to experiment with @views, Folds.map, updating db in place, and the like. I haven't gotten much improvement! CFR allocates about 38MB and play() allocates about 1.1MB currently, about what I calculated. I sure thought that moving df1 and df2 to @views would help with that but it didn't. I'm misunderstanding something there.
+
+Anyway, it seems really resistant to optimization and it's fast enough for me for now, so I'm just gonna run it from powershell and do other things for now. I'll keep thinking about the problem.
+
+
+
+
+
+******* TODO *******
+********************
+
+
+
