@@ -12,5 +12,6 @@ The end-result of this project will be a **database** (in a cross-platform forma
 I welcome comments and ideas from interested strangers, but be nice -- this is a learning project 😬
 
 **CURRENT STATUS**
+
 v1 works, but sloppily. Code is not well-documented, and performs insufficient logging.
 Now rewriting / refactoring for v2.
