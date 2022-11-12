@@ -161,6 +161,12 @@ end
 #  - allh: a list of all distinct hands h. Equivalent to keys(hRows)
 #  - allH: a list of all accumulator hands H. Equivalent (but not necessarily in sorted order) to keys(HRows) and keys(HID)
 #  - HID: A dict mapping accumulator hands H to integer indices. Used for efficiently indexing M.
+#  - Hprobs_dealer, Hprobs_pone: this is the probability of a player having a certain accumulator play hand H, based on the
+#      combined probability of being dealt a hand and then choosing a discard that can lead to it. It is a sum of values
+#      in the profile_xxx column at the indices given by HID[H]. This is stored separately for efficiency, because 1) this
+#      value is needed often in the play solver and 2) once they are initially calculated, the values can be updated more easily
+#      than by recalculating the sums. This is because after a single training hand, only the probabilities for play hands 
+#      reachable from the dealt hand will change. For more details of this update step, see the core training loop.
 
 "Build a new strategy dataframe, and all supporting structures, from a deck."
 function buildDF(deck)
