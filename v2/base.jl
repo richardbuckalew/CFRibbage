@@ -154,7 +154,13 @@ end
 #  - profile_dealer, profile_pone: the calculated strategy profile for this hand, based on regret and play count. For each h,
 #      this column will sum to 1. Therefore the total column sums to the number of distinct hands h.
 #  - p_play_dealer, p_play_pone: The overall strategy profile for this h + d combo. This column sums to 1.
-
+#
+# In addition to the dataframe and its row mapping hRows, there are several other supporting data structures:
+#  - HRows: a dict which maps *accumulator* hands H to a list of the rows which lead to that H. Since the same H can result
+#      from many different initial hands, the list is long and not contiguous (thus it is not a UnitRange).
+#  - allh: a list of all distinct hands h. Equivalent to keys(hRows)
+#  - allH: a list of all accumulator hands H. Equivalent (but not necessarily in sorted order) to keys(HRows) and keys(HID)
+#  - HID: A dict mapping accumulator hands H to integer indices. Used for efficiently indexing M.
 
 "Build a new strategy dataframe, and all supporting structures, from a deck."
 function buildDF(deck)
