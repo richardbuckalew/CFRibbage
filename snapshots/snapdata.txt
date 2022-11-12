@@ -1,2 +1,0 @@
-{"nSnapshot":1,"nDeals":10000,"timestamp":"2022-03-28T21:54:53.060","dCoverage":0.010341769575529498,"dMin":0,"dMax":3,"pCoverage":0.010333462099216189,"pMin":0,"pMax":2}
-{"nSnapshot":2,"nDeals":3000000,"timestamp":"2022-03-29T19:16:44.043","dCoverage":0.9346751984448405,"dMin":0,"dMax":16,"pCoverage":0.9354145638367248,"pMin":0,"pMax":16}
