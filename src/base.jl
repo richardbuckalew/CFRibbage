@@ -1,4 +1,4 @@
-using Combinatorics, DataFrames, DataStructures, Folds, IterTools, ProgressMeter, Serialization
+using Combinatorics, DataFrames, DataStructures, FLoops, Folds, IterTools, ProgressMeter, Serialization
 
 
 struct Card
@@ -486,7 +486,7 @@ function packFlat(ft::FlatTree)
     return FlatPack(Tuple(index_data), Tuple(value_data), Tuple(tuple_lengths))
 end
 # Not every pair of hands is possible, thus M will contain some copies of Nothing
-packFlat(::Type{Nothing}) = Nothing
+packFlat(::Nothing) = Nothing
 
 
 "Create a FlatTree from a FlatPack."
@@ -508,7 +508,7 @@ function unpackFlat(fp::FlatPack)
     return FlatTree(Tuple(child_indices), Tuple(child_values))
 end
 # Not every pair of hands is possible, thus M will contain some copies of Nothing
-unpackFlat(::Type{Nothing}) = Nothing
+unpackFlat(::Nothing) = Nothing
 
 
 
@@ -519,8 +519,8 @@ function buildM(allH, HID)
     nH = length(allH)
     M = Matrix{Union{Nothing, FlatTree}}(nothing, nH, nH)
 
-    for H1 in allH
-        for H2 in allH
+    @showprogress 1 for H1 in allH
+        @floop for H2 in allH
 
             any(values(merge(H1, H2)) .> 4) && continue
 
@@ -559,11 +559,5 @@ end
 
 
 
-# deck = standardDeck[1:10]
-# (df, hRows, HRows, allh, allH, HID, Hprobs_dealer, Hprobs_pone) = buildDB(deck)
 
-# nH = length(allH)
-M = buildM(allH, HID)
-saveM()
-M2 = loadM()
 
