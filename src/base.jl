@@ -1,4 +1,4 @@
-using Combinatorics, DataFrames, DataStructures, FLoops, Folds, IterTools, ProgressMeter, Serialization
+using Combinatorics, DataFrames, DataStructures, FLoops, Folds, IterTools, ProgressMeter, Serialization, ThreadTools
 
 
 struct Card
@@ -155,6 +155,7 @@ end
 #  - discard: the canonical form of each viable discard.
 #  - playhand: a tuple of the ranks resulting from making the corresponding discard. Redundant info.
 #  - count_dealer, count_pone: a count of how many times this discard has been chosen by the player in past games
+#  - dealt_dealer, dealt_pone: a count of how many times this hand has been dealt. Only first row in each hRows block updated.
 #  - regret_dealer, regret_pone: the cumulative regret from having not played this discard
 #  - profile_dealer, profile_pone: the calculated strategy profile for this hand, based on regret and play count. For each h,
 #      this column will sum to 1. Therefore the total column sums to the number of distinct hands h.
@@ -165,7 +166,8 @@ end
 #      from many different initial hands, the list is long and not contiguous (thus it is not a UnitRange).
 #  - allh: a list of all distinct hands h. Equivalent to keys(hRows)
 #  - allH: a list of all accumulator hands H. Equivalent (but not necessarily in sorted order) to keys(HRows) and keys(HID)
-#  - HID: A dict mapping accumulator hands H to integer indices. Used for efficiently indexing M.
+#  - hID: a dict mapping canonical hands h to sequential integer indices. Used for analytics.
+#  - HID: A dict mapping accumulator hands H to sequential integer indices. Used for efficiently indexing M.
 #  - Hprobs_dealer, Hprobs_pone: this is the probability of a player having a certain accumulator play hand H, based on the
 #      combined probability of being dealt a hand and then choosing a discard that can lead to it. It is a sum of values
 #      in the profile_xxx column at the indices given by HID[H]. This is stored separately for efficiency, because 1) this
@@ -182,6 +184,8 @@ function buildDB(deck)
     p_deal = Float64[]
     discard = dType[]
     playhand = NTuple{4, Int}[]
+    dealt_dealer = Int64[]
+    dealt_pone = Int64[]
     count_dealer = Int64[]
     count_pone = Int64[]
     regret_dealer = Float64[]
@@ -194,14 +198,16 @@ function buildDB(deck)
     hRows = Dict{hType, UnitRange{Int}}()
     HRows = Dict{HType, Vector{Int}}()
     allh = hType[]
+    hID = Dict{hType, Int}()
     allH = HType[]
     HID = Dict{HType, Int}()
 
     n = 0
     Hid = 1
-    @showprogress 1 for h in keys(hCounts)
+    @showprogress 1 for (hid, h) in enumerate(keys(hCounts))
 
         push!(allh, h)
+        hID[h] = hid
 
         D = getDiscards(h)
         nd = length(D)
@@ -224,6 +230,8 @@ function buildDB(deck)
             push!(p_deal, hCounts[h] / N)
             push!(count_dealer, 0)
             push!(count_pone, 0)
+            push!(dealt_dealer, 0)
+            push!(dealt_pone, 0)
             push!(regret_dealer, 0.0)
             push!(regret_pone, 0.0)
             push!(profile_dealer, 1.0 / nd)
@@ -240,6 +248,7 @@ function buildDB(deck)
 
     df = DataFrame(p_deal = p_deal, discard = discard, playhand = playhand, 
                     count_dealer = count_dealer, count_pone = count_pone,
+                    dealt_dealer = dealt_dealer, dealt_pone = dealt_pone,
                     regret_dealer = regret_dealer, regret_pone = regret_pone,
                     profile_dealer = profile_dealer, profile_pone = profile_pone,
                     p_play_dealer = p_play_dealer, p_play_pone = p_play_pone)
@@ -252,7 +261,7 @@ function buildDB(deck)
         Hprobs_pone[H] = Hprobs_dealer[H]
     end
 
-    return (df, hRows, HRows, allh, allH, HID, Hprobs_dealer, Hprobs_pone)
+    return (df, hRows, HRows, allh, allH, hID, HID, Hprobs_dealer, Hprobs_pone)
 
 end
 
