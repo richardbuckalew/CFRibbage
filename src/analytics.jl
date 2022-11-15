@@ -1,5 +1,5 @@
 """
-This file holds the tools for logging progress and processing it.
+analytics.jl holds the tools for logging progress and processing it.
   A web dashboard (probably plotly.dash; I'll consider Genie too) will monitor training progress. So logs
 need to be threadsafe. To achieve this, we'll log regularly and have the progress monitor lag behind by one
 full log file.
@@ -8,8 +8,8 @@ full log file.
 not cross-platform (without work), and not suited for cloud storage, so we will also log summary statistics 
 in json form.
 
-  Training will proceed in segments; during a segment the results of dealt hands will be stored and used to 
-generate a Snapshot at the end of the segment. The real-time data stored includes:
+  Training will proceed in segments; during a segment the results of dealt hands will be stored in a TrainingData
+object and used to generate a SummaryStats object at the end of the segment. The real-time data stored includes:
   - IDs of hands dealt to each player (from hID)
   - id of the discard chosen by each player (integer index within hRows)
   - net scores achieved for each hand dealt
@@ -28,12 +28,13 @@ struct TrainingData
     dealt_pone::Vector{Int64}
     discards_dealer::Vector{Int64}              # a list of the relative indices of each discard played
     discards_pone::Vector{Int64}
-    scores::Vector{Int64}                   # the net score (value) of each hand played
+    scores::Vector{Int64}                       # the net score (value) of each hand played
     deltas::Vector{Float64}                     # the normed deltas of each hand
 end
 
 struct SummaryStats
     n_hands::Int64                              # Total number of training hands dealt
+    cpu_time::Float64                           # total time spent training
     coverage_dealer::Float64                    # Percentage of all hands seen
     coverage_pone::Float64                      
     hand_counts_dealer::Accumulator{Int64, Int64}      # keys: # of times a hand has been seen; values: number of such hands
@@ -47,14 +48,14 @@ struct SummaryStats
     HpHist_pone::Tuple{Vector{Float64}, Vector{Int64}}
 end
 function Base.show(io::IO, ::MIME"text/plain", S::SummaryStats)
-    print(io, "Summary Stats for ", S.n_hands, " hands:\n")
+    print(io, "Summary Stats for ", S.n_hands, " hands in ", S.cpu_time, "s:\n")
     print(io, "    Coverage: ", (round(S.coverage_dealer, digits=4), round(S.coverage_pone, digits = 4)), "\n")
     print(io, "    Average Δ: ", round(S.delta_perhand, digits=4), "\n")
 end
 
 
 "Create a SummaryStats object from a snapshot of df and related data."
-function summarize(df, hRows, Hprobs_dealer, Hprobs_pone, old_stats::SummaryStats, tData::TrainingData)
+function summarize(df, dt, hRows, Hprobs_dealer, Hprobs_pone, old_stats::SummaryStats, tData::TrainingData)
 
     # stats to be gleaned from df
     covered_dealer = 0 
@@ -97,7 +98,12 @@ function summarize(df, hRows, Hprobs_dealer, Hprobs_pone, old_stats::SummaryStat
     average_score = (old_stats.n_hands * old_stats.average_score + sum(tData.scores)) / n_hands
 
 
-    return SummaryStats(n_hands, coverage_dealer, coverage_pone, hand_counts_dealer, hand_counts_pone,
+    # Old stats
+    cpu_time = old_stats.cpu_time + dt
+
+
+
+    return SummaryStats(n_hands, cpu_time, coverage_dealer, coverage_pone, hand_counts_dealer, hand_counts_pone,
                          active_discards_dealer, active_discards_pone, average_score, delta_perhand,
                          Hprob_max, HpHist_dealer, HpHist_pone)
 

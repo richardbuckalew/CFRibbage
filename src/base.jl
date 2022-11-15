@@ -423,17 +423,20 @@ end
 #
 # No two nodes ever have a child in common, so the number of nodes in the tree equals the length of either vector.
 struct FlatTree
+    child_plays::Tuple{Vararg{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}}
     child_indices::Tuple{Vararg{Union{NTuple{4, Int16}, NTuple{3, Int16}, NTuple{2, Int16}, NTuple{1, Int16}, Tuple{}}}}
     child_values::Tuple{Vararg{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}}
 end
+FlatTree() = FlatTree(((),), ((),), ((),))
 Base.length(ft::FlatTree) = length(ft.child_indices)
-Base.getindex(ft::FlatTree, ix::Int) = (ft.child_indices[ix], ft.child_values[ix])
+Base.getindex(ft::FlatTree, ix::Int) = (ft.child_plays[ix], ft.child_indices[ix], ft.child_values[ix])
 Base.show(io::IO, ft::FlatTree) = "Flat Tree (" * string(length(ft)) * ")"
-
+Base.show(ft::FlatTree) = "Flat Tree (" * string(length(ft)) * ")"
 
 "Create a FlatTree from a tree rooted at the PlayState ps."
 function flatten(ps::PlayState)
 
+    P = Vector{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}()
     I = Vector{Union{NTuple{4, Int16}, NTuple{3, Int16}, NTuple{2, Int16}, NTuple{1, Int16}, Tuple{}}}()
     V = Vector{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}()
 
@@ -442,11 +445,12 @@ function flatten(ps::PlayState)
 
     while !isempty(Q)
         node = popfirst!(Q)
-        v = Int8[]
+        p = Int8[]
         i = Int16[]
+        v = Int8[]
         
         for child in node.children
-
+            push!(p, child.history[end])
             push!(v, child.value)
             # if the child is a leaf, then it's already represented by the above push. We don't need a new index
             #   too because there would be no values to put there anyway.
@@ -456,10 +460,11 @@ function flatten(ps::PlayState)
                 push!(Q, child)
             end
         end
+        push!(P, Tuple(p))
         push!(I, Tuple(i))
         push!(V, Tuple(v))
     end
-    return FlatTree(Tuple(I), Tuple(V))
+    return FlatTree(Tuple(P), Tuple(I), Tuple(V))
 end
 
 
@@ -474,6 +479,7 @@ end
 #   This will be important when *unpacking* FlatPacks. In this case, tuple_lengths[ix] will be zero.
 
 struct FlatPack
+    play_data::Tuple{Vararg{Int8}}
     index_data::Tuple{Vararg{Int16}}
     value_data::Tuple{Vararg{Int8}}
     tuple_lengths::Tuple{Vararg{Int8}}
@@ -481,18 +487,20 @@ end
 
 "Create a FlatPack from a FlatTree."
 function packFlat(ft::FlatTree)
+    play_data = Int8[]
     index_data = Int16[]
     value_data = Int8[]
     tuple_lengths = Int8[]
 
     for ix in 1:length(ft)
         k = length(ft.child_indices[ix])
+        push!(play_data, ft.child_plays[ix]...)
         push!(index_data, ft.child_indices[ix]...)
         push!(value_data, ft.child_values[ix]...)
         push!(tuple_lengths, k)
     end
 
-    return FlatPack(Tuple(index_data), Tuple(value_data), Tuple(tuple_lengths))
+    return FlatPack(Tuple(play_data), Tuple(index_data), Tuple(value_data), Tuple(tuple_lengths))
 end
 # Not every pair of hands is possible, thus M will contain some copies of Nothing
 packFlat(::Nothing) = Nothing
@@ -500,21 +508,24 @@ packFlat(::Nothing) = Nothing
 
 "Create a FlatTree from a FlatPack."
 function unpackFlat(fp::FlatPack)
+    child_plays = []
     child_indices = []
     child_values = []
     ix = 1
     for k in fp.tuple_lengths
         if k == 0
+            push!(child_plays, (fp.play_data[ix],))
             push!(child_indices, ())
             push!(child_values, (fp.value_data[ix],))
             ix += 1
         else
+            push!(child_plays, Tuple(fp.play_data[ix:(ix+k-1)]))
             push!(child_indices, Tuple(fp.index_data[ix:(ix+k-1)]))
             push!(child_values, Tuple(fp.value_data[ix:(ix+k-1)]))
             ix += k
         end
     end
-    return FlatTree(Tuple(child_indices), Tuple(child_values))
+    return FlatTree(Tuple(child_plays), Tuple(child_indices), Tuple(child_values))
 end
 # Not every pair of hands is possible, thus M will contain some copies of Nothing
 unpackFlat(::Nothing) = Nothing
@@ -522,7 +533,7 @@ unpackFlat(::Nothing) = Nothing
 
 
 
-"Build the matrix M of all possible game trees, in FlatTree format."
+"Build the matrix M of all possible game trees, in FlatTree format. dim 1 is dealer; dim 2 is pone."
 function buildM(allH, HID)
 
     nH = length(allH)
