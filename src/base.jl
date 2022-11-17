@@ -19,7 +19,8 @@ Base.isless(x::Card, y::Card) = (x.suit > y.suit) ? true : (x.rank < y.rank)   #
 #       in which a card's suit is irrelevant. The Accumulator form is convenient for the recursive play algorithms.
 #
 # By convention, the first form will be denoted by variables containing the full string 'hand'. The second will be denoted
-#   by a lowercase h, and the third by an upper case H.
+#   by a lowercase h, and the third by an upper case H. We'll use the same convention for discards: 'discard' is cards, 'd'
+#   means canonical form, and 'D' is an accumulator.
 #
 #
 # NOTE: we have hand-coded the assumption that there are four suits.
@@ -52,7 +53,7 @@ function canonicalize(h::Vector{Card})
 end
 
 
-"Convert an accumulator hand into a vector of ranks"
+"Convert an accumulator hand into a sorted vector of ranks"
 function c2v(H::HType)
     return sort([r for r in keys(H) for ii in 1:H[r]])
 end
@@ -173,7 +174,10 @@ end
 #      in the profile_xxx column at the indices given by HID[H]. This is stored separately for efficiency, because 1) this
 #      value is needed often in the play solver and 2) once they are initially calculated, the values can be updated more easily
 #      than by recalculating the sums. This is because after a single training hand, only the probabilities for play hands 
-#      reachable from the dealt hand will change. For more details of this update step, see the core training loop.
+#      reachable from the dealt hand will change. For more details of this update step, see training.jl.
+
+
+
 
 "Build a new strategy dataframe, and its supporting structures, from a deck."
 function buildDB(deck)
@@ -429,7 +433,8 @@ struct FlatTree
 end
 FlatTree() = FlatTree(((),), ((),), ((),))
 Base.length(ft::FlatTree) = length(ft.child_indices)
-Base.getindex(ft::FlatTree, ix::Int) = (ft.child_plays[ix], ft.child_indices[ix], ft.child_values[ix])
+Base.getindex(ft::FlatTree, ix::Int64) = (ft.child_plays[ix], ft.child_indices[ix], ft.child_values[ix])
+Base.getindex(ft::FlatTree, ix::Int16) = (ft.child_plays[ix], ft.child_indices[ix], ft.child_values[ix])
 Base.show(io::IO, ft::FlatTree) = "Flat Tree (" * string(length(ft)) * ")"
 Base.show(ft::FlatTree) = "Flat Tree (" * string(length(ft)) * ")"
 
@@ -558,16 +563,34 @@ function buildM(allH, HID)
 end
 
 
-
-"Save M to disk."
-function saveM()
-    serialize("data/M.jls", Folds.map(packFlat, M))
+struct DB
+    df::DataFrame
+    hRows::Dict{hType, UnitRange{Int}}
+    HRows::Dict{HType, Vector{Int}}
+    allh::Vector{hType}
+    allH::Vector{HType}
+    hID::Dict{hType, Int}
+    HID::Dict{HType, Int}
+    Hprobs_dealer::Dict{HType, Float64}
+    Hprobs_pone::Dict{HType, Float64}
+    M::Matrix{Union{Nothing, FlatTree}}
+    n_h::Int64
+    n_H::Int64
 end
 
-"Load M from disk."
-function loadM()
-    return Folds.map(unpackFlat, deserialize("data/M.jls"))
+"Build and create the DB struct from scratch."
+function initDB(deck::Vector{Card})
+    (df, hRows, HRows, allh, allH, hID, HID, Hprobs_dealer, Hprobs_pone) = buildDB(deck)
+    M = buildM(allH, HID)
+    return DB(df, hRows, HRows, allh, allH, hID, HID, Hprobs_dealer, Hprobs_pone, M, length(allh), length(allH))
 end
+
+
+
+"Save the db to disk."
+
+
+"Load the db from disk."
 
 
 

@@ -6,6 +6,48 @@ and the bayesian inference update step. There are some important constants defin
 import DataStructures
 
 
+
+
+
+## BIG NOTE: The include and exclude masks and methods assume all four suits exist in the deck. 
+## IF YOU TEST ON A DECK WITH FEWER THAN 4 SUITS, YOU MUST CHANGE THE MAGIC NUMBER 4 THAT OCCURS 23 LINES DOWN.
+
+"Generate a bit mask of size n_H x 4 x 13. imask[m,n,r] is true if HID^-1[m] contains at least n copies of rank r."
+function generateIncludeMask(db)
+    imask = falses(db.n_H, 4, 13)
+    for r in 1:13
+        for k in 1:4
+            for H in db.allH
+                Hid = db.HID[H]
+                (H[r] >= k) && (imask[Hid, k, r] = true)
+            end
+        end
+    end
+    return imask
+end
+
+"Generate a bit mask of size n_H x 4 x 13. emask[m,n,r] is true if HID^-1[m] contains at most 4-n copies of rank r."
+function generateExcludeMask(db)
+    emask = falses(db.n_H, 4, 13)
+    for r in 1:13
+        for k in 1:4
+            for H in db.allH
+                Hid = db.HID[H]
+                (H[r] <= (4-k)) && (emask[Hid, k, r] = true)
+            end
+        end
+    end
+    return emask
+end
+
+
+
+####################
+## PLAY UTILITIES ##
+####################
+
+
+
 #   For development, and potentially for training, too, we define an information model that does not contain enough
 # to support the bayesian update step. When using this model, probabilities will always be based on the base assumption
 # of the current strategy profile, rather than updating in response to opponent plays.
@@ -25,54 +67,19 @@ struct InformationModel_Base
     trees::Vector{Union{FlatTree, Nothing}}     # The row or column from M that corresponds to our hand
 end
 
-function InformationModel_Base()
+function InformationModel_Base(db::DB)
     return InformationModel_Base(
                 Accumulator{Int64, Int64}(),
                 Accumulator{Int64, Int64}(),
-                trues(n_H),
-                fill(1.0 / n_H, n_H),
-                fill(1, n_H),
-                fill(FlatTree(), n_H)
+                trues(db.n_H),
+                fill(1.0 / db.n_H, db.n_H),
+                fill(1, db.n_H),
+                fill(FlatTree(), db.n_H)
                 )
 end
 
 function Base.show(io::IO, IM::InformationModel_Base)
-    print(io, "IM_Base. Known include: ", IM.include, ";  Known exclude: ", IM.exclude, "\n")
-    T = hcat(IM.model, IM.probs)
-    print(T)
-end
-
-
-function init_model!(IM::InformationModel_Base, known_cards::HType, whichplayer::Int64, H::HType, M, HID)
-    for (r, m) in known_cards
-        newExclude!(IM, r, m)
-    end
-    for ix in eachindex(IM.model)
-        if whichplayer == 1
-            (M[HID[H], ix] == Nothing) && (IM.model[ix] = false)
-        elseif whichplayer == 2
-            (M[ix, HID[H]] == Nothing) && (IM.model[ix] = false)
-        end
-    end
-end
-
-#NOTE: The following assumes that allH is ordered according to HID, so that HID[allH] == 1:n_H
-"Set the probabilities in an information model according to the strategy profile corresponding to Hprobs."
-function init_probs!(IM::InformationModel_Base, allH::Vector{HType}, Hprobs::Dict{HType, Float64})
-    for ix in eachindex(IM.probs)
-        IM.probs[ix] = Hprobs[allH[ix]]
-    end
-end
-
-"Initialize IM.trees to the correct FlatTrees for our hand H. If whichplayer == 1, then we are dealer."
-function init_trees!(IM::InformationModel_Base, whichplayer::Int64, H::HType, M, HID)
-    for ix in eachindex(IM.trees)
-        if whichplayer == 1
-            IM.trees[ix] = M[HID[H], ix]
-        elseif whichplayer == 2
-            IM.trees[ix] = M[ix, HID[H]]
-        end
-    end
+    print(io, "IM_Base. Include: ", IM.include, ";  Exclude: ", IM.exclude, "\n")
 end
 
 
@@ -106,7 +113,7 @@ end
 
 ## Functions for updating and resetting Information Models
 
-function reset!(IM::InformationModel_Base)
+function reset!(IM::InformationModel_Base, n_H::Int64)
     for k in 1:13
         IM.include[k] = 0
         IM.exclude[k] = 0
@@ -114,6 +121,54 @@ function reset!(IM::InformationModel_Base)
     fill!(IM.model, true)
     fill!(IM.pointers, 1)
     fill!(IM.probs, 1.0/n_H)
+end
+
+
+function init_model!(IM::InformationModel_Base, knownRanks::HType, whichplayer::Int64, H::HType, db::DB)
+    for (r, m) in knownRanks
+        newExclude!(IM, r, m)
+    end
+    for ix in eachindex(IM.model)
+        if whichplayer == 1
+            (db.M[db.HID[H], ix] == Nothing) && (IM.model[ix] = false)
+        elseif whichplayer == 2
+            (db.M[ix, db.HID[H]] == Nothing) && (IM.model[ix] = false)
+        end
+    end
+end
+
+#NOTE: The following assumes that allH is ordered according to HID, so that HID[allH] == 1:n_H
+"Set the probabilities in an information model according to the strategy profile corresponding to Hprobs."
+function init_probs!(IM::InformationModel_Base, allH::Vector{HType}, Hprobs::Dict{HType, Float64})
+    for ix in eachindex(IM.probs)
+        IM.probs[ix] = Hprobs[allH[ix]]
+    end
+end
+
+"Initialize IM.trees to the correct FlatTrees for our hand H. If whichplayer == 1, then we are dealer."
+function init_trees!(IM::InformationModel_Base, whichplayer::Int64, H::HType, db)
+    for ix in eachindex(IM.trees)
+        if whichplayer == 1
+            IM.trees[ix] = db.M[db.HID[H], ix]
+        elseif whichplayer == 2
+            IM.trees[ix] = db.M[ix, db.HID[H]]
+        end
+    end
+end
+
+
+
+"Initialize IM given known cards. knownRanks *includes the cards in H, the discard, and the turn*."
+function init!(IM::InformationModel_Base, H::HType, knownRanks::HType, whichplayer::Int64, db::DB)
+    reset!(IM, db.n_H)
+    init_model!(IM, knownRanks, whichplayer, H, db)
+    if whichplayer == 1
+        init_probs!(IM, db.allH, db.Hprobs_pone)
+    elseif whichplayer == 2
+        init_probs!(IM, db.allH, db.Hprobs_dealer)
+    end
+    renormalize!(IM)
+    init_trees!(IM, whichplayer, H, db)
 end
 
 
@@ -131,8 +186,18 @@ end
 
 "Update the information model IM based on the knowledge that mult new copies of r must be excluded from opponent's hand."
 function newExclude!(IM::InformationModel_Base, r::Int64, mult::Int64 = 1)
+    # println("  exclude ", mult, " x ", r)
+    # println("    before: ", IM.model, " (", sum(IM.model), ")")
     IM.exclude[r] += mult
-    IM.model .&= @view emask[:,IM.exclude[r], r]         # emask is a global defined in CFRibbage.jl
+    IM.exclude[r] = min(4-IM.include[r], IM.exclude[r])
+    if IM.exclude[r] > 0
+        IM.model .&= @view emask[:,IM.exclude[r], r]         # emask is a global defined in CFRibbage.jl
+    end
+    # println("     emask: ", emask[:,IM.exclude[r], r])
+    # println("     after: ", IM.model, " (", sum(IM.model), ")")
+    # println("  ", IM.exclude)
+    # println("  ", IM.include)
+    # println("\n\n")
 end
 
 
@@ -144,8 +209,8 @@ function opponentPlay!(IM::InformationModel_Base, play::Int64, playtotal::Int64)
 
     # Update model
     if play == 0   # GO
-        for r in 1:(31 - playtotal)
-            newExclude!(IM, r, 4 - IM.exclude[r])
+        for r in 1:min(13, (31 - playtotal))
+            (IM.exclude[r] < 4) && newExclude!(IM, r, 4 - IM.exclude[r])
         end
     else            # a card was played
         newInclude!(IM, play)
@@ -155,6 +220,7 @@ function opponentPlay!(IM::InformationModel_Base, play::Int64, playtotal::Int64)
     for (ix, tree) in enumerate(IM.trees)
         isnothing(tree) && continue             # no tree to point to
         (IM.model[ix] == false) && continue     # dead pointer
+        (length(tree[IM.pointers[ix]][2]) == 0) && continue
 
         for (jx, r) in enumerate(tree[IM.pointers[ix]][1])      # look thru the potential plays for opp at this node
             if r == play
@@ -178,7 +244,7 @@ function myPlay!(IM::InformationModel_Base, play::Int64)
         (IM.model[ix] == false) && continue
         (length(tree[IM.pointers[ix]][2]) == 0) && continue     # natural end of the tree
 
-        for (jx, r) in enumerate(tree[IM.pointers[ix]][1])
+        for (jx, r) in enumerate(tree[IM.pointers[ix]][1]::Tuple)
             if r == play
                 IM.pointers[ix] = tree[IM.pointers[ix]][2][jx]
                 break
@@ -191,39 +257,50 @@ end
 "Choose the best play based on IM, as player whichplayer."
 function getPlay(IM::InformationModel_Base, whichplayer::Int64)
     (whichplayer == 1) ? (whichmod = 1) : (whichmod = -1)       # p2 prefers negatives, but we want to compare positives.
-    totalEVs = fill(0.0, 13)
-    bestEV = -99.0
-    bestplay = -1    
+    totalEVs = Accumulator{Int8, Float64}()
     for ix in eachindex(IM.model)
         IM.model[ix] || continue        # only consider live options
         (length(IM.trees[ix][IM.pointers[ix]][1]) == 0) && (return 0)
         (length(IM.trees[ix][IM.pointers[ix]][1]) == 1) && (return IM.trees[ix][IM.pointers[ix]][1][1])
         for jx in eachindex(IM.trees[ix][IM.pointers[ix]][1])
             totalEVs[IM.trees[ix][IM.pointers[ix]][1][jx]] += whichmod * IM.probs[ix] * IM.trees[ix][IM.pointers[ix]][3][jx]
-            if totalEVs[IM.trees[ix][IM.pointers[ix]][1][jx]] > bestEV
-                bestEV = totalEVs[IM.trees[ix][IM.pointers[ix]][1][jx]]
-                bestplay = IM.trees[ix][IM.pointers[ix]][1][jx]
-            end
         end
     end
+    bestEV = -999
+    bestplay = -1
+    for cand in keys(totalEVs)
+        if totalEVs[cand] > bestEV
+            bestEV = totalEVs[cand]
+            bestplay = cand
+        end
+    end
+
+    if bestplay == -1
+        display("bad bestplay!")
+    end
+
     return bestplay
 end
 
 
 
-
-
-
-"Get the result of one play hand"
+"Get the result of one play hand. Assumes IM1 and IM2 have been initialized."
 function playHand(H1::HType, H2::HType, IM1::InformationModel_Base, IM2::InformationModel_Base)
     total = 0
     whoseturn = 2
     firstgo = false
     history = Int64[]
 
-    # println(c2v(H1), " vs ", c2v(H2))
+    # println("\nNEW HAND:")
 
     while (any(values(H1) .> 0) || any(values(H2) .> 0))
+        
+        # println(c2v(H1), " vs ", c2v(H2))
+        # println("  history: ", history)    
+        # println("  total: ", total)  
+        # println("    p1 include: ", c2v(IM1.include), " and exclude: ", c2v(IM1.exclude))
+        # println("    p2 include: ", c2v(IM2.include), " and exclude: ", c2v(IM2.exclude))
+
 
         if whoseturn == 1
             if any(values(H1) .> 0)
@@ -238,11 +315,11 @@ function playHand(H1::HType, H2::HType, IM1::InformationModel_Base, IM2::Informa
                 if firstgo
                     total = 0
                     firstgo = false
-                    println("2x go")
                 else
                     firstgo = true
                 end
             else
+                firstgo = false
                 H1[p] -= 1
                 total += cardvalues[p]
             end
@@ -259,23 +336,22 @@ function playHand(H1::HType, H2::HType, IM1::InformationModel_Base, IM2::Informa
                 if firstgo
                     total = 0
                     firstgo = false
-                    println("2x go")
                 else
                     firstgo = true
                 end
             else
+                firstgo = false
                 H2[p] -= 1
                 total += cardvalues[p]
             end
-        end
 
-        # println(c2v(H1), " vs ", c2v(H2))
-        # println("  history: ", history)    
-        # println("  total: ", total)    
+        end
+  
+        # println("  p", whoseturn, " plays ", p, ";  total now ", total)
 
         # flush(stdout)
 
-        # sleep(0.5)
+        # sleep(0.1)
 
         whoseturn = 3-whoseturn
 
@@ -285,43 +361,84 @@ end
 
 
 
+"Given the two play hands and the history, calculate the net score."
+function scoreHistory(H1, H2, history, db)
+    ix = 1
+    for r in history
+        # println("current node: ", M[HID[H1], HID[H2]][ix], " at index ", ix)
+        # println("  ", r, " played")
 
-
-
-
-## BIG NOTE: The include and exclude masks and methods assume all four suits exist in the deck. 
-## IF YOU TEST ON A DECK WITH FEWER THAN 4 SUITS, YOU MUST CHANGE THE MAGIC NUMBER 4 THAT OCCURS 23 LINES DOWN.
-
-"Generate a bit mask of size n_H x 4 x 13. imask[m,n,r] is true if HID^-1[m] contains at least n copies of rank r."
-function generateIncludeMask()
-    imask = falses(n_H, 4, 13)
-    for r in 1:13
-        for k in 1:4
-            for H in allH
-                Hid = HID[H]
-                (H[r] >= k) && (imask[Hid, k, r] = true)
-            end
+        jx = findfirst(db.M[db.HID[H1], db.HID[H2]][ix][1] .== r)
+        if length(db.M[db.HID[H1], db.HID[H2]][ix][2]) > 0
+            ix = db.M[db.HID[H1], db.HID[H2]][ix][2][jx]
+        else
+            return db.M[db.HID[H1], db.HID[H2]][ix][3][jx]
         end
-    end
-    return imask
-end
 
-"Generate a bit mask of size n_H x 4 x 13. emask[m,n,r] is true if HID^-1[m] contains at most 4-n copies of rank r."
-function generateExcludeMask()
-    emask = falses(n_H, 4, 13)
-    for r in 1:13
-        for k in 1:4
-            for H in allH
-                Hid = HID[H]
-                (H[r] <= (4-k)) && (emask[Hid, k, r] = true)
-            end
-        end
     end
-    return emask
 end
 
 
 
 
+
+##############
+## CFR GUTS ##
+##############
+
+
+
+# The core CFR loops is:
+#   - Deal hands (we'll put this in CFRibbage.jl)
+#   - Select discards according to current strategy
+#   - Play and score selection and counterfactuals (my other potential discards against their actual discard)
+#   - Calculate regrets and update strategy
+# only step 3 has any nuance to it.
+
+
+"Get index of discard for hand h using the profile."
+function getDiscard(dfrows, whichplayer::Int64)
+        x = rand()
+    y = 0.0
+    (whichplayer == 1) ? (profile = @view dfrows[:,:profile_dealer]) : (profile = @view dfrows[:,:profile_pone])
+    for (ix, p) in enumerate(profile)
+        y += p
+        if x < y
+            return ix
+        end
+    end
+end
+
+
+
+"Calculate counterfactual play scores (and the actual factual one, while we're at it)."
+function getPlayResults!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}, rows1, rows2, 
+                        di1::Int64, di2::Int64, known1::HType, known2::HType, turnrank::Int64,
+                        IM1::InformationModel_Base, IM2::InformationModel_Base, db::DB)
+
+    # score all of dealer's possible hands against pone's actual choice                    
+    for (ix, row) in enumerate(eachrow(rows1))
+        H1 = counter(row.playhand)
+        H2 = counter(rows2[di2, :playhand])
+        
+        init!(IM1, H1, known1, 1, db)
+        init!(IM2, H2, known2, 2, db)
+
+        scorebuffer1[ix] = scoreHistory(H1, H2, playHand(copy(H1), copy(H2), IM1, IM2), db)
+
+    end
+
+    # ditto for pone
+    for (ix, row) in enumerate(eachrow(rows2))
+        H1 = counter(rows1[di1, :playhand])
+        H2 = counter(row.playhand)
+        init!(IM1, H1, known1, 1, db)
+        init!(IM2, H2, known2, 2, db)
+
+        scorebuffer2[ix] = scoreHistory(H1, H2, playHand(copy(H1), copy(H2), IM1, IM2), db)
+
+    end
+
+end
 
 
