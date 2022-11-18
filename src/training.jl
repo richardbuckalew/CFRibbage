@@ -394,9 +394,11 @@ end
 #   - Play and score selection and counterfactuals (my other potential discards against their actual discard)
 #   - Calculate regrets and update strategy
 # only step 3 has any nuance to it.
+#
+# The CFR loop function itself lives at the top level in CFRibbage.jl. The following are the functions that it calls.
 
 
-"Get index of discard for hand h using the profile."
+"Get index of discard for hand h relative to rows from df."
 function getDiscard(dfrows, whichplayer::Int64)
         x = rand()
     y = 0.0
@@ -412,7 +414,7 @@ end
 
 
 "Calculate counterfactual play scores (and the actual factual one, while we're at it)."
-function getPlayResults!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}, rows1, rows2, 
+function getPlayScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}, rows1, rows2, 
                         di1::Int64, di2::Int64, known1::HType, known2::HType, turnrank::Int64,
                         IM1::InformationModel_Base, IM2::InformationModel_Base, db::DB)
 
@@ -440,5 +442,131 @@ function getPlayResults!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64
     end
 
 end
+
+
+"Get the show score for a hand (including the turn card). Set isCrib = true when scoring the crib."
+function scoreHand(hand::handType, turncard::Card, isCrib = false)
+
+    s = 0
+    flushfound = false
+    runlen = 0
+    for combsize in 5:-1:2
+        for comb in combinations(hand, combsize)
+
+            if (combsize >= 4) && !flushfound       # check for a flush. If we find one, set flushfound to true
+                if !isCrib || !(turncard in hand)   # the crib can't flush with the turn card.
+                    if all([c.suit == comb[1].suit for c in comb])
+                        s += combsize
+                        flushfound = true
+                        # println("  flush: ", comb)
+                    end
+                end
+            end
+
+            if (combsize >= 3) && (runlen <= combsize)  # check for a run. If we find one, set runlen = combsize. We'll still get other runs.
+                ranks = sort([c.rank for c in comb])
+                runfound = true
+                for ix in 2:combsize
+                    if ranks[ix] != ranks[ix-1] + 1
+                        runfound = false
+                        break
+                    end
+                end
+                if runfound
+                    runlen = combsize
+                    s += combsize
+                    # println("  run: ", comb)
+                end
+            end
+            
+            if sum([cardvalues[c.rank] for c in comb]) == 15        # check for 15
+                s += 2
+                # println("  fifteen: ", comb)
+            end
+
+            if combsize == 2                                        # check for a pair
+                if comb[1].rank == comb[2].rank
+                    s += 2
+                    # println("  pair: ", comb)
+                end
+            end
+
+        end
+    end
+    return s
+end
+
+
+"Find the hand to be scored in the show, given canonical form of the dealt hand and discard, plus the suit perm, and the turn card."
+function getShowHand(h::hType, d::dType, turncard::Card, sperm)
+    hand = [turncard]
+    for ix in 1:4       # sperm has four entries, even if the hand has fewer suits
+        for r in h[ix]
+            (r in d[ix]) || push!(hand, Card(r, sperm[ix]))
+        end
+    end
+    return hand
+end
+
+"Build the crib from each discard in canonical form."
+function buildCrib(d1::dType, d2::dType, sp1, sp2, turncard::Card)
+    crib = [turncard]
+    for ix in 1:4
+        for r in d1[ix]
+            push!(crib, Card(r, sp1[ix]))
+        end
+        for r in d2[ix]
+            push!(crib, Card(r, sp2[ix]))
+        end
+    end
+    return crib
+end
+
+
+
+"Calculate counterfactual show scores (and the factual one too). All scores are net scores to the dealer."
+function getShowScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}, 
+                        rows1, rows2, h1::hType, sp1, h2::hType, sp2, di1::Int64, di2::Int64, turncard::Card)
+
+    # score all of dealer's possible hands against pone's actual choice                    
+    for (ix, row) in enumerate(eachrow(rows1)) 
+        scorebuffer1[ix] = scoreHand(getShowHand(h1, row.discard, turncard, sp1), turncard)
+    end
+
+    # scores are always net dealer, so pone scores are subtracted.
+    for (ix, row) in enumerate(eachrow(rows2))
+        scorebuffer2[ix] = -scoreHand(getShowHand(h2, row.discard, turncard, sp2), turncard)
+    end
+
+    # adjust scores according to opponent's actual show score (did i mention these are net to the dealer?)
+    s1 = scorebuffer1[di1]
+    scorebuffer1 .-= scorebuffer2[di2]
+    scorebuffer2 .+= s1
+
+
+    # now add cribs. They always count for the dealer.
+    for (ix, row) in enumerate(eachrow(rows1))
+        scorebuffer1[ix] += scoreHand(buildCrib(row.discard, rows2.discard[di2], sp1, sp2, turncard), turncard, true)
+    end
+
+    for (ix, row) in enumerate(eachrow(rows2))
+        scorebuffer2[ix] += scoreHand(buildCrib(row.discard, rows1.discard[di1], sp2, sp1, turncard), turncard, true)
+    end
+
+end
+
+
+
+"Run counterfactual score."
+function CFscores(showbuffer1::Vector{Int64}, showbuffer2::Vector{Int64}, playbuffer1::Vector{Int64}, playbuffer2::Vector{Int64},
+                    rows1, rows2, h1::hType, sp1, h2::hType, sp2, di1::Int64, di2::Int64, turncard::Card,
+                    known1::HType, known2::HType, IM1::InformationModel_Base, IM2::InformationModel_Base, db::DB)
+
+
+end
+
+
+
+
 
 

@@ -14,7 +14,7 @@ Base.isless(x::Card, y::Card) = (x.suit > y.suit) ? true : (x.rank < y.rank)   #
 #  - A canonicalized form, a tuple of tuples, each tuple containing the ranks of a given suit. The canonical form has an
 #       associated suit permutation sp for reconstructing the original hand. With the suit perm, it is thus equivalent
 #       to the vector of cards. Without the suit perm, it is unique up to the symmetries of cribbage. Thus this form, 
-#       *without* the suit perm, is used in the strategy database
+#       *without* the suit perm, is used in the strategy database.
 #  - An Accumulator, counting the number of repetitions of each rank present in the hand. This form is for the play phase,
 #       in which a card's suit is irrelevant. The Accumulator form is convenient for the recursive play algorithms.
 #
