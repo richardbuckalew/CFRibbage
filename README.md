@@ -13,6 +13,6 @@ I welcome comments and ideas from interested strangers, but be nice -- this is a
 
 **CURRENT STATUS**
 
-v2 is in an alpha state! I tested it on a 20-card deck (sevens through jacks).
+v2 is in an alpha state! It's been tested it on a 20-card deck (sevens through jacks) and shows good convergence.
 
 ![training_ss](https://user-images.githubusercontent.com/6075739/202863337-25b1c902-7204-4ffd-9e48-8dd09d8f3c0b.png)
