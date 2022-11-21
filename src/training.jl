@@ -3,7 +3,7 @@
 and the bayesian inference update step. There are some important constants defined here for efficiency as well.
 """
 
-import DataStructures
+using DataStructures
 
 
 
@@ -13,12 +13,12 @@ import DataStructures
 ## IF YOU TEST ON A DECK WITH FEWER THAN 4 SUITS, YOU MUST CHANGE THE MAGIC NUMBER 4 THAT OCCURS 23 LINES DOWN.
 
 "Generate a bit mask of size n_H x 4 x 13. imask[m,n,r] is true if HID^-1[m] contains at least n copies of rank r."
-function generateIncludeMask(db)
-    imask = falses(db.n_H, 4, 13)
+function generateIncludeMask(n_H, allH, HID)
+    imask = falses(n_H, 4, 13)
     for r in 1:13
         for k in 1:4
-            for H in db.allH
-                Hid = db.HID[H]
+            for H in allH
+                Hid = HID[H]
                 (H[r] >= k) && (imask[Hid, k, r] = true)
             end
         end
@@ -27,12 +27,12 @@ function generateIncludeMask(db)
 end
 
 "Generate a bit mask of size n_H x 4 x 13. emask[m,n,r] is true if HID^-1[m] contains at most 4-n copies of rank r."
-function generateExcludeMask(db)
-    emask = falses(db.n_H, 4, 13)
+function generateExcludeMask(n_H, allH, HID)
+    emask = falses(n_H, 4, 13)
     for r in 1:13
         for k in 1:4
-            for H in db.allH
-                Hid = db.HID[H]
+            for H in allH
+                Hid = HID[H]
                 (H[r] <= (4-k)) && (emask[Hid, k, r] = true)
             end
         end
@@ -126,7 +126,7 @@ end
 
 function init_model!(IM::InformationModel_Base, knownRanks::HType, whichplayer::Int64, H::HType, db::DB)
     for (r, m) in knownRanks
-        newExclude!(IM, r, m)
+        newExclude!(IM, r, m, db)
     end
     for ix in eachindex(IM.model)
         if whichplayer == 1
@@ -178,20 +178,20 @@ end
 
 
 "Update the IM's model based on the knowledge that mult new copies of r must be included in opponent's hand."
-function newInclude!(IM::InformationModel_Base, r::Int64, mult::Int64 = 1)
+function newInclude!(IM::InformationModel_Base, r::Int64, mult::Int64, db::DB)
     IM.include[r] += mult
-    IM.model .&= @view imask[:,IM.include[r],r]         # imask is a global defined in CFRibbage.jl
+    IM.model .&= @view db.imask[:,IM.include[r],r]         # imask is a global defined in CFRibbage.jl
 end
 
 
 "Update the information model IM based on the knowledge that mult new copies of r must be excluded from opponent's hand."
-function newExclude!(IM::InformationModel_Base, r::Int64, mult::Int64 = 1)
+function newExclude!(IM::InformationModel_Base, r::Int64, mult::Int64, db::DB)
     # println("  exclude ", mult, " x ", r)
     # println("    before: ", IM.model, " (", sum(IM.model), ")")
     IM.exclude[r] += mult
     IM.exclude[r] = min(4-IM.include[r], IM.exclude[r])
     if IM.exclude[r] > 0
-        IM.model .&= @view emask[:,IM.exclude[r], r]         # emask is a global defined in CFRibbage.jl
+        IM.model .&= @view db.emask[:,IM.exclude[r], r]         # emask is a global defined in CFRibbage.jl
     end
     # println("     emask: ", emask[:,IM.exclude[r], r])
     # println("     after: ", IM.model, " (", sum(IM.model), ")")
@@ -205,15 +205,15 @@ end
 Update the information model IM in response to an opponent's play when total was playtotal.
 This involves: 1) updating model; 2) updating pointers; 3) updating probs.
 """
-function opponentPlay!(IM::InformationModel_Base, play::Int64, playtotal::Int64)
+function opponentPlay!(IM::InformationModel_Base, play::Int64, playtotal::Int64, db::DB)
 
     # Update model
     if play == 0   # GO
         for r in 1:min(13, (31 - playtotal))
-            (IM.exclude[r] < 4) && newExclude!(IM, r, 4 - IM.exclude[r])
+            (IM.exclude[r] < 4) && newExclude!(IM, r, 4 - IM.exclude[r], db)
         end
     else            # a card was played
-        newInclude!(IM, play)
+        newInclude!(IM, play, 1, db)
     end
 
     # Update pointers
@@ -285,7 +285,7 @@ end
 
 
 "Get the result of one play hand. Assumes IM1 and IM2 have been initialized."
-function playHand(H1::HType, H2::HType, IM1::InformationModel_Base, IM2::InformationModel_Base)
+function playHand(H1::HType, H2::HType, IM1::InformationModel_Base, IM2::InformationModel_Base, db::DB)
     total = 0
     whoseturn = 2
     firstgo = false
@@ -310,7 +310,7 @@ function playHand(H1::HType, H2::HType, IM1::InformationModel_Base, IM2::Informa
                 p = 0
             end
             push!(history, p)
-            opponentPlay!(IM2, p, total)
+            opponentPlay!(IM2, p, total, db)
             if p == 0
                 if firstgo
                     total = 0
@@ -331,7 +331,7 @@ function playHand(H1::HType, H2::HType, IM1::InformationModel_Base, IM2::Informa
                 p = 0
             end
             push!(history, p)
-            opponentPlay!(IM1, p, total)
+            opponentPlay!(IM1, p, total, db)
             if p == 0
                 if firstgo
                     total = 0
@@ -414,32 +414,38 @@ end
 
 
 "Calculate counterfactual play scores (and the actual factual one, while we're at it)."
+# function getPlayScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}, rows1, rows2, 
+#                         di1::Int64, di2::Int64, known1::HType, known2::HType, turnrank::Int64,
+#                         IM1::InformationModel_Base, IM2::InformationModel_Base, db::DB)
+
 function getPlayScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}, rows1, rows2, 
                         di1::Int64, di2::Int64, known1::HType, known2::HType, turnrank::Int64,
-                        IM1::InformationModel_Base, IM2::InformationModel_Base, db::DB)
+                        IMs1::Vector{InformationModel_Base}, IMs2::Vector{InformationModel_Base}, db::DB)
 
-    # score all of dealer's possible hands against pone's actual choice                    
-    for (ix, row) in enumerate(eachrow(rows1))
+    # score all of dealer's possible hands against pone's actual choice               
+    @floop for (ix, row) in enumerate(eachrow(rows1))
         H1 = counter(row.playhand)
         H2 = counter(rows2[di2, :playhand])
         
-        init!(IM1, H1, known1, 1, db)
-        init!(IM2, H2, known2, 2, db)
+        init!(IMs1[ix], H1, known1, 1, db)
+        init!(IMs2[ix], H2, known2, 2, db)
 
-        scorebuffer1[ix] = scoreHistory(H1, H2, playHand(copy(H1), copy(H2), IM1, IM2), db)
-
+        scorebuffer1[ix] = scoreHistory(H1, H2, playHand(copy(H1), copy(H2), IMs1[ix], IMs2[ix], db), db)
     end
+        
 
     # ditto for pone
-    for (ix, row) in enumerate(eachrow(rows2))
+    @floop for (ix, row) in enumerate(eachrow(rows2))
         H1 = counter(rows1[di1, :playhand])
         H2 = counter(row.playhand)
-        init!(IM1, H1, known1, 1, db)
-        init!(IM2, H2, known2, 2, db)
+        init!(IMs1[ix], H1, known1, 1, db)
+        init!(IMs2[ix], H2, known2, 2, db)
 
-        scorebuffer2[ix] = scoreHistory(H1, H2, playHand(copy(H1), copy(H2), IM1, IM2), db)
+        scorebuffer2[ix] = scoreHistory(H1, H2, playHand(copy(H1), copy(H2), IMs1[ix], IMs2[ix], db), db)
 
     end
+    
+
 
 end
 
@@ -524,7 +530,7 @@ end
 
 
 
-"Calculate counterfactual show scores (and the factual one too). All scores are net scores to the dealer."
+"Calculate counterfactual show scores (and the factual one too). Scores are net to dealer."
 function getShowScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}, 
                         rows1, rows2, h1::hType, sp1, h2::hType, sp2, di1::Int64, di2::Int64, turncard::Card)
 
@@ -535,12 +541,12 @@ function getShowScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}
 
     # scores are always net dealer, so pone scores are subtracted.
     for (ix, row) in enumerate(eachrow(rows2))
-        scorebuffer2[ix] = -scoreHand(getShowHand(h2, row.discard, turncard, sp2), turncard)
+        scorebuffer2[ix] -= scoreHand(getShowHand(h2, row.discard, turncard, sp2), turncard)
     end
 
     # adjust scores according to opponent's actual show score (did i mention these are net to the dealer?)
     s1 = scorebuffer1[di1]
-    scorebuffer1 .-= scorebuffer2[di2]
+    scorebuffer1 .+= scorebuffer2[di2]
     scorebuffer2 .+= s1
 
 
@@ -556,14 +562,6 @@ function getShowScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}
 end
 
 
-
-"Run counterfactual score."
-function CFscores(showbuffer1::Vector{Int64}, showbuffer2::Vector{Int64}, playbuffer1::Vector{Int64}, playbuffer2::Vector{Int64},
-                    rows1, rows2, h1::hType, sp1, h2::hType, sp2, di1::Int64, di2::Int64, turncard::Card,
-                    known1::HType, known2::HType, IM1::InformationModel_Base, IM2::InformationModel_Base, db::DB)
-
-
-end
 
 
 

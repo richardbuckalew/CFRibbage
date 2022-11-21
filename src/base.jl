@@ -190,8 +190,8 @@ function buildDB(deck)
     playhand = NTuple{4, Int}[]
     dealt_dealer = Int64[]
     dealt_pone = Int64[]
-    count_dealer = Int64[]
-    count_pone = Int64[]
+    # count_dealer = Int64[]
+    # count_pone = Int64[]
     regret_dealer = Float64[]
     regret_pone = Float64[]
     profile_dealer = Float64[]
@@ -232,8 +232,8 @@ function buildDB(deck)
             end
 
             push!(p_deal, hCounts[h] / N)
-            push!(count_dealer, 0)
-            push!(count_pone, 0)
+            # push!(count_dealer, 0)
+            # push!(count_pone, 0)
             push!(dealt_dealer, 0)
             push!(dealt_pone, 0)
             push!(regret_dealer, 0.0)
@@ -251,7 +251,7 @@ function buildDB(deck)
     end
 
     df = DataFrame(p_deal = p_deal, discard = discard, playhand = playhand, 
-                    count_dealer = count_dealer, count_pone = count_pone,
+                    # count_dealer = count_dealer, count_pone = count_pone,
                     dealt_dealer = dealt_dealer, dealt_pone = dealt_pone,
                     regret_dealer = regret_dealer, regret_pone = regret_pone,
                     profile_dealer = profile_dealer, profile_pone = profile_pone,
@@ -370,7 +370,7 @@ function solve!(ps::PlayState)
 
     candidates = Int64[];
     childvalues = Int64[];
-
+ 
     for (ii, c) in enumerate(ps.hands[ps.owner])
         newtotal = cardvalues[c] + ps.total;
         (newtotal > 31) && (continue);
@@ -435,8 +435,8 @@ FlatTree() = FlatTree(((),), ((),), ((),))
 Base.length(ft::FlatTree) = length(ft.child_indices)
 Base.getindex(ft::FlatTree, ix::Int64) = (ft.child_plays[ix], ft.child_indices[ix], ft.child_values[ix])
 Base.getindex(ft::FlatTree, ix::Int16) = (ft.child_plays[ix], ft.child_indices[ix], ft.child_values[ix])
-Base.show(io::IO, ft::FlatTree) = "Flat Tree (" * string(length(ft)) * ")"
-Base.show(ft::FlatTree) = "Flat Tree (" * string(length(ft)) * ")"
+Base.show(io::IO, ft::FlatTree) = print(io, "Flat Tree (" * string(length(ft)) * ")")
+Base.show(ft::FlatTree) = print("Flat Tree (" * string(length(ft)) * ")")
 
 "Create a FlatTree from a tree rooted at the PlayState ps."
 function flatten(ps::PlayState)
@@ -507,8 +507,8 @@ function packFlat(ft::FlatTree)
 
     return FlatPack(Tuple(play_data), Tuple(index_data), Tuple(value_data), Tuple(tuple_lengths))
 end
-# Not every pair of hands is possible, thus M will contain some copies of Nothing
-packFlat(::Nothing) = Nothing
+# Not every pair of hands is possible, thus M will contain some copies of nothing
+packFlat(::Nothing) = nothing
 
 
 "Create a FlatTree from a FlatPack."
@@ -532,14 +532,14 @@ function unpackFlat(fp::FlatPack)
     end
     return FlatTree(Tuple(child_plays), Tuple(child_indices), Tuple(child_values))
 end
-# Not every pair of hands is possible, thus M will contain some copies of Nothing
-unpackFlat(::Nothing) = Nothing
+# Not every pair of hands is possible, thus M will contain some copies of nothing
+unpackFlat(::Nothing) = nothing
 
 
 
 
 "Build the matrix M of all possible game trees, in FlatTree format. dim 1 is dealer; dim 2 is pone."
-function buildM(allH, HID)
+function buildM!(target, allH, HID)
 
     nH = length(allH)
     M = Matrix{Union{Nothing, FlatTree}}(nothing, nH, nH)
@@ -554,16 +554,15 @@ function buildM(allH, HID)
 
             ps = PlayState(2, [c2v(H1), c2v(H2)], Int64[], Int64[], 0, 0, 0, [0,0], PlayState[], 0, 0)
             solve!(ps)
-            M[i1, i2] = flatten(ps)
+            target[i1, i2] = flatten(ps)
 
         end
-    end
-    
-    return M
+    end    
 end
 
 
 struct DB
+    deck::Vector{Card}
     df::DataFrame
     hRows::Dict{hType, UnitRange{Int}}
     HRows::Dict{HType, Vector{Int}}
@@ -576,21 +575,19 @@ struct DB
     M::Matrix{Union{Nothing, FlatTree}}
     n_h::Int64
     n_H::Int64
+    imask::BitArray
+    emask::BitArray
 end
 
 "Build and create the DB struct from scratch."
 function initDB(deck::Vector{Card})
     (df, hRows, HRows, allh, allH, hID, HID, Hprobs_dealer, Hprobs_pone) = buildDB(deck)
-    M = buildM(allH, HID)
-    return DB(df, hRows, HRows, allh, allH, hID, HID, Hprobs_dealer, Hprobs_pone, M, length(allh), length(allH))
+    imask = generateIncludeMask(length(allH), allH, HID)
+    emask = generateExcludeMask(length(allH), allH, HID)
+    # M = buildM(allH, HID)
+    M = Matrix{Union{FlatTree, Nothing}}(nothing, length(allH), length(allH))
+    return DB(deck, df, hRows, HRows, allh, allH, hID, HID, Hprobs_dealer, Hprobs_pone, M, length(allh), length(allH), imask, emask)
 end
-
-
-
-"Save the db to disk."
-
-
-"Load the db from disk."
 
 
 
