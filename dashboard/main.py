@@ -19,20 +19,23 @@ nps = 0
 
 
 
-
 def load_data():
     global TData
     global SStats
+    n_already = len(TData)
     filenames = [fn for fn in os.listdir(data_path) if (fn[:6] == 'sStats' or fn[:5] == 'tData')]
     N = []
     for fn in filenames:
         root = os.path.splitext(fn)[0]
         n = int(root.split('_')[1])
-        if not n in N:
+        if (n > n_already) and (not n in N):
             N.append(n)
     N.sort()
-    TData = [json.load(open(os.path.join(data_path, 'tData_'+str(n)+'.json'))) for n in N]
-    SStats = [json.load(open(os.path.join(data_path, 'sStats_'+str(n)+'.json'))) for n in N]
+    for n in N:
+        TData.append(json.load(open(os.path.join(data_path, 'tData_'+str(n)+'.json'))))
+        SStats.append(json.load(open(os.path.join(data_path, 'sStats_'+str(n)+'.json'))))
+    # TData = [json.load(open(os.path.join(data_path, 'tData_'+str(n)+'.json'))) for n in N]
+    # SStats = [json.load(open(os.path.join(data_path, 'sStats_'+str(n)+'.json'))) for n in N]
 
 
 def process_tData(tol = 1e-6):
@@ -43,35 +46,40 @@ def process_tData(tol = 1e-6):
     quads = []
     nonzeros = []
     zero_fracs = []
+    X = []
 
     total_dealt = 0
     total_time = 0.0
 
     for (n, tData) in enumerate(TData):
         total_dealt += tData['n_dealt']
+        X.append(total_dealt)
         total_time += tData['dt']
         nonzeros.append([x for x in tData['deltas_dealer'] if x > tol] + [x for x in tData['deltas_pone'] if x > tol])
         zero_fracs.append( (len([x for x in tData['deltas_dealer'] if x < tol]) + len([x for x in tData['deltas_pone'] if x < tol])) / (len(tData['deltas_dealer']) + len(tData['deltas_pone'])) )
         q = []
         q.append(min(nonzeros[-1]))
-        for p in [0.25, 0.5, 0.75]:
+
+        for p in [0.025, 0.5, 0.975]:
             q.append(np.quantile(nonzeros[-1], p))
+
         q.append(max(nonzeros[-1]))
         quads.append(q)
 
     nps = total_dealt / total_time
 
-    return (quads, zero_fracs)
+    return (X, quads, zero_fracs)
 
 
 
 def make_cfig():
     f = make_subplots(specs=[[{'secondary_y':True}]])
     load_data()
-    (quads, zero_fracs) = process_tData()
+    (x, quads, zero_fracs) = process_tData()
 
-    x = list(range(1, len(quads)+1))
-    print(len(x))
+    # x = list(range(1, len(quads)+1))
+    # print(len(x))
+    # print(x)
 
     f.add_scatter(x = x, y = zero_fracs, fill='tonexty', line={'color':'lightgrey'})
 
@@ -87,12 +95,29 @@ def make_cfig():
     
     return f
 
-# cfig = make_cfig()
 
+def make_coverage(n):
+    s = SStats[n]
+
+    hcounts = s['hand_counts_dealer']
+    for (k, v) in s['hand_counts_pone'].items():
+        if k in hcounts.keys():
+            hcounts[k] += v
+        else:
+            hcounts[k] = v
+
+    f = go.Figure()
+    X = list(hcounts.keys())
+    X.sort()
+    Y = [hcounts[x] for x in X]
+    f.add_trace(go.Bar(x = X, y=Y))
+
+    f.update_layout(title='Count of hands which have been dealt x times')
+    return f
 
 
 def make_discards(n):
-    s = SStats[n-1]
+    s = SStats[n]
 
     counts = [0 for i in range(15)]
     for (k, v) in s['active_discards_dealer'].items():
@@ -111,7 +136,7 @@ def make_discards(n):
 
 
 def make_probs(n):
-    s = SStats[n-1]
+    s = SStats[n]
     counts = s['HpHist_dealer'][1]
     for (ix, c) in enumerate(s['HpHist_pone'][1]):
         counts[ix] += c
@@ -132,31 +157,37 @@ app = Dash(__name__)
 
 app.layout = html.Div([
     html.Div([
-        dcc.Graph(id='convergence')
-    ]),
-    html.Div([
-        dcc.Graph(id='hprobs')
+        dcc.Graph(id='convergence', responsive = True)
     ], style = {'width':'49%', 'display':'inline-block'}),
     html.Div([
-        dcc.Graph(id='discards')
+        dcc.Graph(id='coverage', responsive = True)
     ], style = {'width':'49%', 'display':'inline-block'}),
-    dcc.Interval(id='iv', interval=60000, n_intervals = 0),
+    html.Div([
+        dcc.Graph(id='hprobs', responsive = True)
+    ], style = {'width':'49%', 'display':'inline-block'}),
+    html.Div([
+        dcc.Graph(id='discards', responsive = True)
+    ], style = {'width':'49%', 'display':'inline-block'}),
+    dcc.Interval(id='iv', interval=600000, n_intervals = 0),
 ])
 
 
 @app.callback(
+    Output('coverage', 'figure'),
     Output('discards', 'figure'),
     Output('hprobs', 'figure'),
-    Input('convergence', 'hoverData')
+    Input('convergence', 'clickData')
     )
-def update_discards(hd):
-    if hd is None:
-        return (go.Figure(), go.Figure())
+def update_discards(cd):
+    if cd is None:
+        return (go.Figure(), go.Figure(), go.Figure())
 
-    n = hd['points'][0]['x']
+    n = cd['points'][0]['pointNumber']
+
+    f0 = make_coverage(n)
     f1 = make_discards(n)
     f2 = make_probs(n)
-    return (f1, f2)
+    return (f0, f1, f2)
 
 
 
