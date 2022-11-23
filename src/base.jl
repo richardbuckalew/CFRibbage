@@ -419,122 +419,65 @@ function solve!(ps::PlayState)
 end
 
 
-# The data model of the FlatTree is a flat list of the nodes of the game tree, in order of a breadth-first traversal.
-# Each node has a value and a set of children. In practice, we are interested in the values of the children of the
-#   node under consideration, so we model each node as a pair of tuples (vl...) and (ix...) where the vl are the 
-#   childrens' values and the ix are the absolute indices of the child nodes within the flat tree.
-# The values are stored as 8-bit integers and the indices at 16-bit integers.
-#
-# No two nodes ever have a child in common, so the number of nodes in the tree equals the length of either vector.
+
+
+struct FlatNode
+    n::Int8                     # number of children
+    plays::NTuple{4, Int8}      # the play leading to each child
+    fi::Int16                   # First Index. child indices are fi .+ 0:(n-1)
+    values::NTuple{4, Int8}     # the minmax value of each child path
+    isLeaf::Bool                # is this a leaf?
+end
+FlatNode() = FlatNode(0, (0, 0, 0, 0), 0, (0, 0, 0, 0), true)
+Base.length(fn::FlatNode) = fn.n
+Base.show(fn::FlatNode) = print("Node (", fn.n, ")")
+Base.show(io::IO, fn::FlatNode) = print(io, "Node (", fn.n, ")")
+Base.show(io::IO, ::MIME"text/plain", fn::FlatNode) = print(io, "Node (", fn.n, ")")
+
 struct FlatTree
-    child_plays::Tuple{Vararg{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}}
-    child_indices::Tuple{Vararg{Union{NTuple{4, Int16}, NTuple{3, Int16}, NTuple{2, Int16}, NTuple{1, Int16}, Tuple{}}}}
-    child_values::Tuple{Vararg{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}}
+    data::Vector{FlatNode}
 end
-FlatTree() = FlatTree(((),), ((),), ((),))
-Base.length(ft::FlatTree) = length(ft.child_indices)
-Base.getindex(ft::FlatTree, ix::Int64) = (ft.child_plays[ix], ft.child_indices[ix], ft.child_values[ix])
-Base.getindex(ft::FlatTree, ix::Int16) = (ft.child_plays[ix], ft.child_indices[ix], ft.child_values[ix])
-Base.show(io::IO, ft::FlatTree) = print(io, "Flat Tree (" * string(length(ft)) * ")")
-Base.show(ft::FlatTree) = print("Flat Tree (" * string(length(ft)) * ")")
+FlatTree() = FlatTree([FlatNode()])
+Base.length(ft::FlatTree) = length(ft.data)
+Base.getindex(ft::FlatTree, ix) = ft.data[ix]
+Base.show(ft::FlatTree) = print("Flat Tree (", length(ft), ")")
+Base.show(io::IO, ft::FlatTree) = print(io, "Flat Tree (", length(ft), ")")
+Base.show(io::IO, ::MIME"text/plain", ft::FlatTree) = print(io, "Flat Tree (", length(ft), ")")
 
-"Create a FlatTree from a tree rooted at the PlayState ps."
-function flatten(ps::PlayState)
 
-    P = Vector{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}()
-    I = Vector{Union{NTuple{4, Int16}, NTuple{3, Int16}, NTuple{2, Int16}, NTuple{1, Int16}, Tuple{}}}()
-    V = Vector{Union{NTuple{4, Int8}, NTuple{3, Int8}, NTuple{2, Int8}, NTuple{1, Int8}, Tuple{}}}()
 
-    Q = [ps]
+function flatten(root::PlayState)
+
+    FN = FlatNode[]
+
+    Q = [root]
     n = 1
-
     while !isempty(Q)
-        node = popfirst!(Q)
-        p = Int8[]
-        i = Int16[]
-        v = Int8[]
+        ps = popfirst!(Q)
+
+        # building a FlatNode to represent this playstate
+        p = Vector{Int8}(undef, 4)
+        i = 0                           # uninitialized i; only need it if we're not a leaf.
+        v = Vector{Int8}(undef, 4)
+        isLeaf = true   # assume we're not leaf until we see that our children don't have children
         
-        for child in node.children
-            push!(p, child.history[end])
-            push!(v, child.value)
-            # if the child is a leaf, then it's already represented by the above push. We don't need a new index
-            #   too because there would be no values to put there anyway.
-            if !isempty(child.children)         
-                n += 1
-                push!(i, n)
-                push!(Q, child)
-            end
+        
+        # we're guaranteed that we have children, since leaf nodes are not leaf states; they're one level up.
+        if !isempty(ps.children[1].children)    # if we're not a leaf node...
+            isLeaf = false
+            i = n+1                             # then we must update our first index...
+            n += length(ps.children)            # and prepare the next one.
+        end                                
+        for (ix, child) in enumerate(ps.children)
+            p[ix] = child.history[end]
+            v[ix] = child.value
+            isLeaf || push!(Q, child)           # If we're not a leaf, then we'll need to process each child
         end
-        push!(P, Tuple(p))
-        push!(I, Tuple(i))
-        push!(V, Tuple(v))
+        k = Int8(length(ps.children))
+        push!(FN, FlatNode(k, Tuple(p), i, Tuple(v), isLeaf))
     end
-    return FlatTree(Tuple(P), Tuple(I), Tuple(V))
+    return FlatTree(FN)
 end
-
-
-
-
-# This format is just fine for working in-memory. Unfortunately, it's pretty slow for serialization. packFlat goes one 
-#   step further, concatenating all of the tuples and storing a separate vectore recording their lengths.
-# This makes for efficient serialization and deserialization; the time gained more than offsets the extra processing
-#   time lost converting between FlatTrees and FlatPacks. FlatPacks are *also* somewhat less space-efficient.
-# NOTE: the index tuple and the values tuple will always have the same length, except when the index tuple is empty,
-#   in which case the children under consideration are leaves, and thus the corresponding value tuples have length 1.
-#   This will be important when *unpacking* FlatPacks. In this case, tuple_lengths[ix] will be zero.
-
-struct FlatPack
-    play_data::Tuple{Vararg{Int8}}
-    index_data::Tuple{Vararg{Int16}}
-    value_data::Tuple{Vararg{Int8}}
-    tuple_lengths::Tuple{Vararg{Int8}}
-end
-
-"Create a FlatPack from a FlatTree."
-function packFlat(ft::FlatTree)
-    play_data = Int8[]
-    index_data = Int16[]
-    value_data = Int8[]
-    tuple_lengths = Int8[]
-
-    for ix in 1:length(ft)
-        k = length(ft.child_indices[ix])
-        push!(play_data, ft.child_plays[ix]...)
-        push!(index_data, ft.child_indices[ix]...)
-        push!(value_data, ft.child_values[ix]...)
-        push!(tuple_lengths, k)
-    end
-
-    return FlatPack(Tuple(play_data), Tuple(index_data), Tuple(value_data), Tuple(tuple_lengths))
-end
-# Not every pair of hands is possible, thus M will contain some copies of nothing
-packFlat(::Nothing) = nothing
-
-
-"Create a FlatTree from a FlatPack."
-function unpackFlat(fp::FlatPack)
-    child_plays = []
-    child_indices = []
-    child_values = []
-    ix = 1
-    for k in fp.tuple_lengths
-        if k == 0
-            push!(child_plays, (fp.play_data[ix],))
-            push!(child_indices, ())
-            push!(child_values, (fp.value_data[ix],))
-            ix += 1
-        else
-            push!(child_plays, Tuple(fp.play_data[ix:(ix+k-1)]))
-            push!(child_indices, Tuple(fp.index_data[ix:(ix+k-1)]))
-            push!(child_values, Tuple(fp.value_data[ix:(ix+k-1)]))
-            ix += k
-        end
-    end
-    return FlatTree(Tuple(child_plays), Tuple(child_indices), Tuple(child_values))
-end
-# Not every pair of hands is possible, thus M will contain some copies of nothing
-unpackFlat(::Nothing) = nothing
-
 
 
 
@@ -545,7 +488,7 @@ function buildM!(target, allH, HID)
     M = Matrix{Union{Nothing, FlatTree}}(nothing, nH, nH)
 
     @showprogress 1 for H1 in allH
-        @floop for H2 in allH
+        Threads.@threads for H2 in allH
 
             any(values(merge(H1, H2)) .> 4) && continue
 
@@ -555,7 +498,6 @@ function buildM!(target, allH, HID)
             ps = PlayState(2, [c2v(H1), c2v(H2)], Int64[], Int64[], 0, 0, 0, [0,0], PlayState[], 0, 0)
             solve!(ps)
             target[i1, i2] = flatten(ps)
-
         end
     end    
 end
@@ -584,8 +526,8 @@ function initDB(deck::Vector{Card})
     (df, hRows, HRows, allh, allH, hID, HID, Hprobs_dealer, Hprobs_pone) = buildDB(deck)
     imask = generateIncludeMask(length(allH), allH, HID)
     emask = generateExcludeMask(length(allH), allH, HID)
-    # M = buildM(allH, HID)
-    M = Matrix{Union{FlatTree, Nothing}}(nothing, length(allH), length(allH))
+    # M = Matrix{Union{FlatTree, Nothing}}(nothing, length(allH), length(allH))
+    M = Matrix{Any}(nothing, length(allH), length(allH))
     return DB(deck, df, hRows, HRows, allh, allH, hID, HID, Hprobs_dealer, Hprobs_pone, M, length(allh), length(allH), imask, emask)
 end
 

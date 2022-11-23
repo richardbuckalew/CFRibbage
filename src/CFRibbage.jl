@@ -57,6 +57,9 @@ function CFR!(playbuffer1::Vector{Int64}, playbuffer2::Vector{Int64},
              rows1, rows2, h1::hType, h2::hType, sp1, sp2, di1::Int64, di2::Int64, turncard,
              known1::HType, known2::HType, IMs1::Vector{InformationModel_Base}, IMs2::Vector{InformationModel_Base}, db::DB)
 
+
+    # println("CFR")
+
     getPlayScores!(playbuffer1, playbuffer2, rows1, rows2, di1, di2, known1, known2, turncard.rank, IMs1, IMs2, db)
     getShowScores!(showbuffer1, showbuffer2, rows1, rows2, h1, sp1, h2, sp2, di1, di2, turncard)
     
@@ -110,9 +113,9 @@ end
 
 
 "Train a batch of size n"
-function doBatch(n::Int64, db::DB, force_deal_threshold = 1.0)
+function doBatch(n::Int64, db::DB)#, force_deal_threshold = 1.0)
 
-    force_hand = nothing
+    # force_hand = nothing
 
     # objects for creating tData at the end
     dealt_dealer = Vector{Int64}(undef, n)
@@ -122,7 +125,7 @@ function doBatch(n::Int64, db::DB, force_deal_threshold = 1.0)
     scores = Vector{Int64}(undef, n)
     deltas_dealer = Vector{Float64}(undef, n)
     deltas_pone = Vector{Float64}(undef, n)
-    mean_delta = 0.0
+    # mean_delta = 0.0
 
 
     # reusable objects for CFR
@@ -147,11 +150,15 @@ function doBatch(n::Int64, db::DB, force_deal_threshold = 1.0)
         # compile hand info
         (hand1, hand2, turncard, h1, h2, sp1, sp2) = dealHands(db.deck)
 
+        # println("Dealt ", hand1, " and ", hand2)
+
         rows1 = @view db.df[db.hRows[h1], :]
         rows2 = @view db.df[db.hRows[h2], :]
     
         di1 = getDiscard(rows1, 1)
         di2 = getDiscard(rows2, 2)
+
+        # println("  Discards: ", di1, " ", di2)
     
         D1 = HType()
         for suit in rows1[di1,:].discard
@@ -193,15 +200,15 @@ function doBatch(n::Int64, db::DB, force_deal_threshold = 1.0)
         deltas_pone[nhand] = maximum(abs.(pfb2[1:nrow(rows2)] - rows2[:, :profile_pone]))
 
 
-        if deltas_dealer[nhand] > force_deal_threshold
-            force_hand = hand1
-            # print('.')
-        elseif deltas_pone[nhand] > force_deal_threshold
-            force_hand = hand2
-            # print('.')
-        else
-            force_hand = nothing
-        end
+        # if deltas_dealer[nhand] > force_deal_threshold
+        #     force_hand = hand1
+        #     # print('.')
+        # elseif deltas_pone[nhand] > force_deal_threshold
+        #     force_hand = hand2
+        #     # print('.')
+        # else
+        #     force_hand = nothing
+        # end
 
 
     end
@@ -211,27 +218,31 @@ function doBatch(n::Int64, db::DB, force_deal_threshold = 1.0)
 end
 
 
-# It's faster (for now) to build M from scratch.
 function saveDB!(db::DB)
+    println("Serializing M...")
+    @time serialize("data/Mpacked.jls", db.M)
+    tempM = copy(db.M)
     fill!(db.M, nothing)
     println("Serializing db...")
     @time serialize("data/db.jls", db)
+    map!(x->x, db.M, tempM)
 end
 
 function loadDB()
     println("Deserializing db...")
     @time db = deserialize("data/db.jls")
-    println("Rebuilding M...")
-    @time buildM!(db.M, db.allH, db.HID)
+    println("Deserializing M...")
+    @time Folds.map!(x->x, db.M, deserialize("data/Mpacked.jls"))
     return db
 end
 
 
 
 function init_environment()
-    deck = [Card(r,s) for r in 7:11 for s in 1:4]
-    # deck = standardDeck
+    # deck = [Card(r,s) for r in 7:11 for s in 1:4]
+    deck = standardDeck
     db = initDB(deck)
+    buildM!(db.M, db.allH, db.HID)
 
     saveDB!(db)
 end
@@ -240,14 +251,13 @@ end
 
 
 
-function train(nBatches = 100, batchSize = 10000)
+function train(db, nBatches = 50, batchSize = 20000)
 
-    db = loadDB()
     println(" ")
     println(" ")
     println("Training begins.")
 
-    force_deal_threshold = 1.0
+    # force_deal_threshold = 1.0
 
     nbatches_present = 0
     for fn in readdir("data/")
@@ -260,14 +270,14 @@ function train(nBatches = 100, batchSize = 10000)
     for ix in 1:nBatches
         println("Batch ", ix, " of ", nBatches)
 
-        (tData, sStats) = doBatch(batchSize, db, force_deal_threshold)
+        (tData, sStats) = doBatch(batchSize, db)#, force_deal_threshold)
 
-        μ = mean(vcat(tData.deltas_dealer, tData.deltas_pone))
-        σ = std(vcat(tData.deltas_dealer, tData.deltas_pone))
+        # μ = mean(vcat(tData.deltas_dealer, tData.deltas_pone))
+        # σ = std(vcat(tData.deltas_dealer, tData.deltas_pone))
 
         println("Dealt ", tData.n_dealt, " hands in ", tData.dt, " s.")
-        println("  Average Δ: ", μ)
-        println("  Std Δ: ", σ)
+        # println("  Average Δ: ", μ)
+        # println("  Std Δ: ", σ)
         println("  Coverage: ", (round(sStats.coverage_dealer; digits = 4), round(sStats.coverage_pone; digits = 4)))
         println("\n")
 
@@ -278,13 +288,17 @@ function train(nBatches = 100, batchSize = 10000)
             JSON.print(f, sStats)
         end
 
-        force_deal_threshold = μ + σ
+        # force_deal_threshold = μ + σ
     end
 
-    serialize("data/db.jls", db)
+    saveDB!(db)
 end
 
-train(100, 1000)
+
+# init_environment()
+db = loadDB()
+train(db)
+
 
 
 end # module CFRibbage

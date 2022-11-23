@@ -186,18 +186,11 @@ end
 
 "Update the information model IM based on the knowledge that mult new copies of r must be excluded from opponent's hand."
 function newExclude!(IM::InformationModel_Base, r::Int64, mult::Int64, db::DB)
-    # println("  exclude ", mult, " x ", r)
-    # println("    before: ", IM.model, " (", sum(IM.model), ")")
     IM.exclude[r] += mult
     IM.exclude[r] = min(4-IM.include[r], IM.exclude[r])
     if IM.exclude[r] > 0
         IM.model .&= @view db.emask[:,IM.exclude[r], r]         # emask is a global defined in CFRibbage.jl
     end
-    # println("     emask: ", emask[:,IM.exclude[r], r])
-    # println("     after: ", IM.model, " (", sum(IM.model), ")")
-    # println("  ", IM.exclude)
-    # println("  ", IM.include)
-    # println("\n\n")
 end
 
 
@@ -220,11 +213,11 @@ function opponentPlay!(IM::InformationModel_Base, play::Int64, playtotal::Int64,
     for (ix, tree) in enumerate(IM.trees)
         isnothing(tree) && continue             # no tree to point to
         (IM.model[ix] == false) && continue     # dead pointer
-        (length(tree[IM.pointers[ix]][2]) == 0) && continue
+        tree[IM.pointers[ix]].isLeaf && continue
 
-        for (jx, r) in enumerate(tree[IM.pointers[ix]][1])      # look thru the potential plays for opp at this node
+        for (jx, r) in enumerate(tree[IM.pointers[ix]].plays)      # look thru the potential plays for opp at this node
             if r == play
-                IM.pointers[ix] = tree[IM.pointers[ix]][2][jx]  # once we find the play that happened, jump
+                IM.pointers[ix] = tree[IM.pointers[ix]].fi + jx - 1  # once we find the play that happened, jump
                 break
             end
         end
@@ -242,11 +235,11 @@ function myPlay!(IM::InformationModel_Base, play::Int64)
     for (ix, tree) in enumerate(IM.trees)
         isnothing(tree) && continue
         (IM.model[ix] == false) && continue
-        (length(tree[IM.pointers[ix]][2]) == 0) && continue     # natural end of the tree
+        tree[IM.pointers[ix]].isLeaf && continue
 
-        for (jx, r) in enumerate(tree[IM.pointers[ix]][1]::Tuple)
+        for (jx, r) in enumerate(tree[IM.pointers[ix]].plays)
             if r == play
-                IM.pointers[ix] = tree[IM.pointers[ix]][2][jx]
+                IM.pointers[ix] = tree[IM.pointers[ix]].fi + jx - 1
                 break
             end
         end
@@ -260,10 +253,10 @@ function getPlay(IM::InformationModel_Base, whichplayer::Int64)
     totalEVs = Accumulator{Int8, Float64}()
     for ix in eachindex(IM.model)
         IM.model[ix] || continue        # only consider live options
-        (length(IM.trees[ix][IM.pointers[ix]][1]) == 0) && (return 0)
-        (length(IM.trees[ix][IM.pointers[ix]][1]) == 1) && (return IM.trees[ix][IM.pointers[ix]][1][1])
-        for jx in eachindex(IM.trees[ix][IM.pointers[ix]][1])
-            totalEVs[IM.trees[ix][IM.pointers[ix]][1][jx]] += whichmod * IM.probs[ix] * IM.trees[ix][IM.pointers[ix]][3][jx]
+        # (IM.trees[ix][IM.pointers[ix]].isLeaf) && (return 0)
+        (IM.trees[ix][IM.pointers[ix]].n == 1) && (return IM.trees[ix][IM.pointers[ix]].plays[1])
+        for jx in 1:IM.trees[ix][IM.pointers[ix]].n
+            totalEVs[IM.trees[ix][IM.pointers[ix]].plays[jx]] += whichmod * IM.probs[ix] * IM.trees[ix][IM.pointers[ix]].values[jx]
         end
     end
     bestEV = -999
@@ -368,12 +361,14 @@ function scoreHistory(H1, H2, history, db)
         # println("current node: ", M[HID[H1], HID[H2]][ix], " at index ", ix)
         # println("  ", r, " played")
 
-        jx = findfirst(db.M[db.HID[H1], db.HID[H2]][ix][1] .== r)
-        if length(db.M[db.HID[H1], db.HID[H2]][ix][2]) > 0
-            ix = db.M[db.HID[H1], db.HID[H2]][ix][2][jx]
-        else
-            return db.M[db.HID[H1], db.HID[H2]][ix][3][jx]
+
+        jx = findfirst(db.M[db.HID[H1], db.HID[H2]][ix].plays .== r)
+        if !db.M[db.HID[H1], db.HID[H2]][ix].isLeaf
+            ix = db.M[db.HID[H1], db.HID[H2]][ix].fi + jx - 1
+        else    
+            return db.M[db.HID[H1], db.HID[H2]][ix].values[jx]
         end
+
 
     end
 end
@@ -422,7 +417,8 @@ function getPlayScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}
                         di1::Int64, di2::Int64, known1::HType, known2::HType, turnrank::Int64,
                         IMs1::Vector{InformationModel_Base}, IMs2::Vector{InformationModel_Base}, db::DB)
 
-    # score all of dealer's possible hands against pone's actual choice               
+    # score all of dealer's possible hands against pone's actual choice  
+
     @floop for (ix, row) in enumerate(eachrow(rows1))
         H1 = counter(row.playhand)
         H2 = counter(rows2[di2, :playhand])
@@ -533,6 +529,8 @@ end
 "Calculate counterfactual show scores (and the factual one too). Scores are net to dealer."
 function getShowScores!(scorebuffer1::Vector{Int64}, scorebuffer2::Vector{Int64}, 
                         rows1, rows2, h1::hType, sp1, h2::hType, sp2, di1::Int64, di2::Int64, turncard::Card)
+
+    # println("    showscores")
 
     # score all of dealer's possible hands against pone's actual choice                    
     for (ix, row) in enumerate(eachrow(rows1)) 
