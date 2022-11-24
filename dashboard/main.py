@@ -13,9 +13,6 @@ import datetime
 data_path = os.path.dirname(__file__) + '/../data/'
 TData = []
 SStats = []
-total_dealt = 0
-total_time = 0
-nps = 0
 
 
 
@@ -34,26 +31,23 @@ def load_data():
     for n in N:
         TData.append(json.load(open(os.path.join(data_path, 'tData_'+str(n)+'.json'))))
         SStats.append(json.load(open(os.path.join(data_path, 'sStats_'+str(n)+'.json'))))
-    # TData = [json.load(open(os.path.join(data_path, 'tData_'+str(n)+'.json'))) for n in N]
-    # SStats = [json.load(open(os.path.join(data_path, 'sStats_'+str(n)+'.json'))) for n in N]
+    print("Loaded ", len(TData), " data sets")
 
 
 def process_tData(tol = 1e-6):
-    global total_dealt
-    global total_time
-    global nps
 
     quads = []
     nonzeros = []
     zero_fracs = []
-    X = []
+    allX = []
+    cumX = []
 
     total_dealt = 0
     total_time = 0.0
 
     for (n, tData) in enumerate(TData):
         total_dealt += tData['n_dealt']
-        X.append(total_dealt)
+        cumX.append(total_dealt)
         total_time += tData['dt']
         nonzeros.append([x for x in tData['deltas_dealer'] if x > tol] + [x for x in tData['deltas_pone'] if x > tol])
         zero_fracs.append( (len([x for x in tData['deltas_dealer'] if x < tol]) + len([x for x in tData['deltas_pone'] if x < tol])) / (len(tData['deltas_dealer']) + len(tData['deltas_pone'])) )
@@ -66,33 +60,40 @@ def process_tData(tol = 1e-6):
         q.append(max(nonzeros[-1]))
         quads.append(q)
 
-    nps = total_dealt / total_time
 
-    return (X, quads, zero_fracs)
+    return (cumX, quads, zero_fracs, nonzeros, total_dealt, total_time)
 
 
 
 def make_cfig():
     f = make_subplots(specs=[[{'secondary_y':True}]])
+    print('loading...')
     load_data()
-    (x, quads, zero_fracs) = process_tData()
+    (cumX, quads, zero_fracs, nonzeros, total_dealt, total_time) = process_tData()
+    nps = total_dealt / total_time
 
-    # x = list(range(1, len(quads)+1))
-    # print(len(x))
-    # print(x)
+    # f.add_scatter(x = cumX, y = [q[0] for q in quads], line = {'color':'black', 'width':0.5, 'dash':'dot' }, secondary_y= True)
+    # f.add_scatter(x = cumX, y = [q[1] for q in quads], line = {'color':'black', 'width':1}, secondary_y= True)
+    # f.add_scatter(x = cumX, y = [q[2] for q in quads], line = {'color':'black', 'width':2}, fill = 'tonexty', secondary_y= True)
+    # f.add_scatter(x = cumX, y = [q[3] for q in quads], line = {'color':'black', 'width':1}, fill = 'tonexty', secondary_y= True)
+    # f.add_scatter(x = cumX, y = [q[4] for q in quads], line = {'color':'black', 'width':0.5, 'dash':'dot' }, secondary_y= True)
 
-    f.add_scatter(x = x, y = zero_fracs, fill='tonexty', line={'color':'lightgrey'})
+    allX = []
+    allNZ = []
+    for (x, nz) in zip(cumX, nonzeros):
+        allX.extend([x for y in nz])
+        allNZ.extend(nz)
 
-    f.add_scatter(x = x, y = [q[0] for q in quads], line = {'color':'black', 'width':0.5, 'dash':'dot' }, secondary_y= True)
-    f.add_scatter(x = x, y = [q[1] for q in quads], line = {'color':'black', 'width':1}, secondary_y= True)
-    f.add_scatter(x = x, y = [q[2] for q in quads], line = {'color':'black', 'width':2}, fill = 'tonexty', secondary_y= True)
-    f.add_scatter(x = x, y = [q[3] for q in quads], line = {'color':'black', 'width':1}, fill = 'tonexty', secondary_y= True)
-    f.add_scatter(x = x, y = [q[4] for q in quads], line = {'color':'black', 'width':0.5, 'dash':'dot' }, secondary_y= True)
+    f.add_histogram2d(x = allX, y = allNZ, xbins={'start':cumX[0], 'end':cumX[-1], 'size':20000}, ybins={'start':0.0, 'end':1.0, 'size':0.02})
+
+    f.add_scatter(x = cumX, y = zero_fracs, fill='tonexty', line={'color':'black', 'width':3, 'dash':'dash'})
+
 
     f.update_layout(showlegend = False)
     f.update_layout(yaxis2={'type':'log'})
-    f.update_layout(title = '{:,} hands dealt in {} ({:.1f} hands per second)'.format(total_dealt, datetime.timedelta(seconds=round(total_time)), nps))
-    
+    f.update_layout(title = '{:,} hands dealt in {} ({:.1f} hands per second)'.format(total_dealt, datetime.timedelta(seconds=round(total_time)), nps),
+                    yaxis_title = "zero fraction", yaxis2_title = "delta")
+
     return f
 
 
@@ -168,7 +169,7 @@ app.layout = html.Div([
     html.Div([
         dcc.Graph(id='discards', responsive = True)
     ], style = {'width':'49%', 'display':'inline-block'}),
-    dcc.Interval(id='iv', interval=600000, n_intervals = 0),
+    dcc.Interval(id='iv', interval=180000, n_intervals = 0),
 ])
 
 
