@@ -13,6 +13,6 @@ I welcome comments and ideas from interested strangers, but be nice -- this is a
 
 **CURRENT STATUS**
 
-We are in an alpha state! Training on a 20-card deck (sevens through jacks) runs at about 100 hands/sec and shows good convergence.
+100 million hands trained. The hand that's been seen the least is up to 5 reps. Still a lot of big swings, but as the maximum delta starts to settle down, It'll be time for targeted training.
 
-![training_ss](https://user-images.githubusercontent.com/6075739/202863337-25b1c902-7204-4ffd-9e48-8dd09d8f3c0b.png)
+![image](https://user-images.githubusercontent.com/6075739/206821243-0d575cc2-9d9d-4344-9b59-f0f7020eb11d.png)
