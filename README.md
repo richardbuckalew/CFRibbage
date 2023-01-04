@@ -17,5 +17,5 @@ I welcome comments and ideas from interested strangers, but be nice -- this is a
 
 ![image](https://user-images.githubusercontent.com/6075739/210567253-9dabd626-35d7-4350-912e-33aa935a0e21.png)
 
-Now that I've starting writing the frontend (see CFRibbage.love), training will pause while I build out the Genie server (I'll be hooking into a lot of the same functions / structures that training uses). Expecting a fully-working alpha build within a couple of weeks.
+Now that I've starting writing the frontend (see [CFRibbage.love](https://github.com/richardbuckalew/CFRibbage.love)), training will pause while I build out the Genie server (I'll be hooking into a lot of the same functions / structures that training uses). Expecting a fully-working alpha build within a couple of weeks.
 
