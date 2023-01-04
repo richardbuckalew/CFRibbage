@@ -13,6 +13,9 @@ I welcome comments and ideas from interested strangers, but be nice -- this is a
 
 **CURRENT STATUS**
 
-100 million hands trained. The hand that's been seen the least is up to 5 reps. Still a lot of big swings, but as the maximum delta starts to settle down, It'll be time for targeted training.
+200 million hands trained. Getting marginal returns on computation now, as more than 80% of the hands dealt result in no change to the strategy profile -- yet, of the hands that *do* see meaningful training, there's a ways to go yet. the 75th percential is still changing by about 4% per deal, and the maximum delta still lives up very close to 80%. Still, that's meaningful progress!
 
-![image](https://user-images.githubusercontent.com/6075739/206821243-0d575cc2-9d9d-4344-9b59-f0f7020eb11d.png)
+![image](https://user-images.githubusercontent.com/6075739/210567253-9dabd626-35d7-4350-912e-33aa935a0e21.png)
+
+Now that I've starting writing the frontend (see CFRibbage.love), training will pause while I build out the Genie server (I'll be hooking into a lot of the same functions / structures that training uses). Expecting a fully-working alpha build within a couple of weeks.
+
