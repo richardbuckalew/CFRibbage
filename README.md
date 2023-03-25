@@ -13,9 +13,11 @@ I welcome comments and ideas from interested strangers, but be nice -- this is a
 
 **CURRENT STATUS**
 
-200 million hands trained. Getting marginal returns on computation now, as more than 80% of the hands dealt result in no change to the strategy profile -- yet, of the hands that *do* see meaningful training, there's a ways to go yet. the 75th percential is still changing by about 4% per deal, and the maximum delta still lives up very close to 80%. Still, that's meaningful progress!
+250 million hands trained. Here is a snapshot of the training progress after 200M hands:
 
 ![image](https://user-images.githubusercontent.com/6075739/210567253-9dabd626-35d7-4350-912e-33aa935a0e21.png)
 
-Now that I've starting writing the frontend (see [CFRibbage.love](https://github.com/richardbuckalew/CFRibbage.love)), training will pause while I build out the Genie server (I'll be hooking into a lot of the same functions / structures that training uses). Expecting a fully-working alpha build within a couple of weeks.
+Nearly 70% of dealt hands resulted in no change to the learned strategy, so I have updated the training code to skip training when both the dealer hand and the pone hand have converged. It's up to 250M now, and the zero rate is back to reasonable levels. After about 100M of hands in this training regime, I'll begin microtargeting the really rare hands that haven't seen a statistically significant number of deals yet. Based on the learning rate, I'm guessing 400M hands dealt is a reasonable endpoint.
+
+I have a working frontend now, at [CFRibbage.love](https://github.com/richardbuckalew/CFRibbage.love)), and a partial backend written with Genie.jl (CFRibbageWeb.jl) but not uploaded to github yet, that includes my first-ever REST API. I have successfully used love2d to poll a remote server in order to choose a discard! This is a big milestone for the project.
 
