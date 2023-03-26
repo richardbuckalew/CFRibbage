@@ -13,9 +13,8 @@ I welcome comments and ideas from interested strangers, but be nice -- this is a
 
 **CURRENT STATUS**
 
-250 million hands trained. Here is 200M vs 250M:
+250 million hands trained.
 
-![training_ss](https://user-images.githubusercontent.com/6075739/227777883-50a75653-df86-4ee7-a11e-15672c0c5a38.png)
 ![250m](https://user-images.githubusercontent.com/6075739/227777978-9660b1f1-2382-4e3f-8fa8-fb31e213b026.png)
 
 At the 200M milestone, nearly 80% of dealt hands resulted in no change to the learned strategy, so I have updated the training code to skip training when both the dealer hand and the pone hand have converged. It's up to 250M now, and the zero rate is already back up near 70%. That is a very crude measure of convergence, since as I noted it was higher than this previously and training was still very much ongoing. But the other indicators definitely suggest that convergence is near. For one thing, the 70% zero rate is *on top of* the previous 80%. The two numbers are not fully independent --- I'm only skipping deals where *both* players' hands have converged (for now). But this means probably 90% of deals involve hands that have converged. 
