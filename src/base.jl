@@ -331,28 +331,43 @@ function scoreplay(play::Int64, history::Vector{Int64}, diffs::Vector{Int64}, to
         pairlength = 0;
     end
     if length(diffs) > 1
-        if runlength == 0
-            if diffs[(end-1):end] in run3diffs
-                runlength += 1;
-                s += runlength+2;
+        runfound = false
+        for runlength_cand in length(history):-1:3
+            local sranks = sort(history[end-runlength_cand+1:end])
+            local sdiffs = diff(sranks)
+            if all(sdiffs .== 1)  
+                runfound = true              
+                runlength = runlength_cand
+                break
             else
-                runlength = 0;
+                runfound = false
             end
-        else
-            currentrun = history[(end-1-runlength):end];
-            if (play == minimum(currentrun) - 1) || (play == maximum(currentrun) + 1)
-                runlength += 1;
-                s += runlength+2;
-            else
-                runlength = 0;
-            end
+            runfound && break
         end
+        (!runfound) && (runlength = 0)
+
+        # if runlength == 0
+        #     if diffs[(end-1):end] in run3diffs
+        #         runlength += 1;
+        #         s += runlength+2;
+        #     else
+        #         runlength = 0;
+        #     end
+        # else
+        #     currentrun = history[(end-1-runlength):end]
+        #     if (play == minimum(currentrun) - 1) || (play == maximum(currentrun) + 1)
+        #         runlength += 1
+        #         s += runlength+2
+        #     else
+        #         runlength = 0
+        #     end
+        # end
     else
-        runlength = 0;
+        runlength = 0
     end
-    (total == 15) && (s += 2);
-    (total == 31) && (s += 1);
-    return (s, pairlength, runlength);
+    (total == 15) && (s += 2)
+    (total == 31) && (s += 1)
+    return (s, pairlength, runlength)
 end
 
 
@@ -361,29 +376,29 @@ end
 function solve!(ps::PlayState)
 
     if all(isempty.(ps.hands))
-        newscores = copy(ps.scores);
-        newscores[3-ps.owner] += 1;
-        ps.value = newscores[1] - newscores[2];
-        ps.bestplay = 0;
-        return ps.value;
+        newscores = copy(ps.scores)
+        newscores[3-ps.owner] += 1
+        ps.value = newscores[1] - newscores[2]
+        ps.bestplay = 0
+        return ps.value
     end
 
-    candidates = Int64[];
-    childvalues = Int64[];
+    candidates = Int64[]
+    childvalues = Int64[]
  
     for (ii, c) in enumerate(ps.hands[ps.owner])
-        newtotal = cardvalues[c] + ps.total;
-        (newtotal > 31) && (continue);
-        (c in candidates) && (continue);
-        push!(candidates, c);
+        newtotal = cardvalues[c] + ps.total
+        (newtotal > 31) && (continue)
+        (c in candidates) && (continue)
+        push!(candidates, c)
 
         
         (length(ps.history) > 0) ? (newdiffs = vcat(ps.diffs, [c-ps.history[end]])) : (newdiffs = Int64[]);
 
         (s, newpairlength, newrunlength) = scoreplay(c, ps.history, newdiffs, newtotal,
                                                         ps.pairlength, ps.runlength);
-        newscores = copy(ps.scores);
-        newscores[ps.owner] += s;
+        newscores = copy(ps.scores)
+        newscores[ps.owner] += s
 
 
         newhands = deepcopy(ps.hands); deleteat!(newhands[ps.owner], ii);

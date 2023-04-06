@@ -495,6 +495,9 @@ function scoreHand(hand::handType, turncard::Card, isCrib = false)
 
         end
     end
+    if (isCrib == false) && (Card(11, turncard.suit) in hand) #nibs
+        s += 1
+    end
     return s
 end
 

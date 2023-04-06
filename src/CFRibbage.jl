@@ -4,6 +4,7 @@ module CFRibbage
 include("base.jl")
 include("analytics.jl")
 include("training.jl")
+# include("web.jl")
 
 using BenchmarkTools, ProfileView
 using JSON, Random
@@ -12,40 +13,28 @@ using JSON, Random
 
 
 
-function dealHands(deck::Vector{Card}, force_hand::Union{handType, Nothing} = nothing)
+function dealHands(db::DB, skiplist_dealer::Vector{Int}, skiplist_pone::Vector{Int})
 
-    shuffle!(deck)
-    
-    hand1 = Card[]
-    hand2 = Card[]
-    turncard = deck[1]
-    if !isnothing(force_hand)
-        if rand() < 0.5
-            hand1 = force_hand
-            for c in deck[1:13]
-                !(c in hand1) && push!(hand2, c)
-                (length(hand2) == 7) && break;
-            end
-            turncard = pop!(hand2)   
-        else
-            hand2 = force_hand
-            for c in deck[1:13]
-                !(c in hand2) && push!(hand1, c)
-                (length(hand1) == 7) && break;
-            end
-            turncard = pop!(hand1)               
+
+    while true
+
+        shuffle!(db.deck)    
+
+        hand1 = db.deck[1:6]
+        hand2 = db.deck[7:12]
+        turncard = db.deck[13] 
+
+        (h1, sp1) = canonicalize(hand1)
+        (h2, sp2) = canonicalize(hand2)
+
+        hid1 = db.hID[h1]
+        hid2 = db.hID[h2]
+
+        if !(hid1 in skiplist_dealer) || !(hid2 in skiplist_pone)
+            return (hand1, hand2, turncard, h1, h2, sp1, sp2)
         end
-    else
-        hand1 = deck[1:6]
-        hand2 = deck[7:12]
-        turncard = deck[13] 
     end
 
-
-    (h1, sp1) = canonicalize(hand1)
-    (h2, sp2) = canonicalize(hand2)
-
-    return (hand1, hand2, turncard, h1, h2, sp1, sp2)
 end
 
 
@@ -141,14 +130,15 @@ function doBatch(n::Int64, db::DB)#, force_deal_threshold = 1.0)
     IMs1 = [InformationModel_Base(db) for ix in 1:15]
     IMs2 = [InformationModel_Base(db) for ix in 1:15]
 
-    # display(force_deal_threshold)
+    skiplist_dealer = deserialize("data/skiplist_dealer.jls")
+    skiplist_pone = deserialize("data/skiplist_pone.jls")
 
     # train!
     t0 = Base.Libc.time()
     for nhand in 1:n
 
         # compile hand info
-        (hand1, hand2, turncard, h1, h2, sp1, sp2) = dealHands(db.deck)
+        (hand1, hand2, turncard, h1, h2, sp1, sp2) = dealHands(db, skiplist_dealer, skiplist_pone)
 
         # println("Dealt ", hand1, " and ", hand2)
 
@@ -219,13 +209,13 @@ end
 
 
 function saveDB!(db::DB)
-    println("Serializing M...")
-    @time serialize("data/Mpacked.jls", db.M)
+    # println("Serializing M...")
+    # @time serialize("data/Mpacked.jls", db.M)
     tempM = copy(db.M)
     fill!(db.M, nothing)
     println("Serializing db...")
     @time serialize("data/db.jls", db)
-    map!(x->x, db.M, tempM)
+    Folds.map!(x->x, db.M, tempM)
 end
 
 function loadDB()
@@ -251,7 +241,7 @@ end
 
 
 
-function train(db, nBatches = 50, batchSize = 20000)
+function train(db, nBatches = 100, batchSize = 100000)
 
     println(" ")
     println(" ")
@@ -261,9 +251,16 @@ function train(db, nBatches = 50, batchSize = 20000)
 
     nbatches_present = 0
     for fn in readdir("data/")
-        (fn == "db.jls") && continue
-        (fn == "Mpacked.jls") && continue
-        n = parse(Int64, split(splitext(fn)[1], "_")[2])
+        if fn[1:5] == "tData"
+            head = splitext(fn)[1]
+            n = parse(Int64, split(head, '_')[2])
+        else
+            continue
+        end
+
+        # (fn == "db.jls") && continue
+        # (fn == "Mpacked.jls") && continue
+        # n = parse(Int64, split(splitext(fn)[1], "_")[2])
         (n > nbatches_present) && (nbatches_present = n)
     end
 
@@ -295,10 +292,12 @@ function train(db, nBatches = 50, batchSize = 20000)
 end
 
 
-# init_environment()
-db = loadDB()
-train(db)
+# db = loadDB()
+# train(db, 100, 100000)
 
 
+# db = deserialize("data/db.jls")
+# buildM!(db.M, db.allH, db.HID)
+# serialize("data/Mpacked.jls", db.M)
 
 end # module CFRibbage
